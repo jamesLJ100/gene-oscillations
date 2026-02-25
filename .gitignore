@@ -1,0 +1,20 @@
+# Exclude specific file types
+*.h5
+*.rds
+*.csv
+*.RData
+*.RDataTmp
+*.RDataTmp1
+*.RDataTmp2
+*.RProj
+
+
+# You can also exclude directories
+data/
+logs/
+scPrisma/
+.Rproj.user/
+
+# Or specific files
+config.json
+secrets.txt
