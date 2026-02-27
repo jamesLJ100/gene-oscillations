@@ -31,4 +31,4 @@ generate_datasets <- function(n_cells, n_genes, n_replicates) {
 #   }
 # }
 
-generate_datasets(n_cells = 1000, n_genes = 500, n_replicates = 3)
+generate_datasets(n_cells = 1000, n_genes = 200, n_replicates = 1)

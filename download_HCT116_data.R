@@ -1,8 +1,8 @@
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 BiocManager::install("GEOquery")
-library(GEOquery)
-library(data.table)
-library(biomaRt)
+#library(GEOquery)
+#library(data.table)
+#library(biomaRt)
 
 # Create directory structure if not present
 dirs <- c(

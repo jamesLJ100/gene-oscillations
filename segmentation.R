@@ -42,4 +42,3 @@ seurat_obj <- RunUMAP(seurat_obj, dims = 1:20)
 colnames(celldata)
 
 # Plot using author's assignments (replace "cluster" with actual column name)
-DimPlot(seurat_obj, group.by = "louvain", label = TRUE)
