@@ -6,7 +6,7 @@ setwd(proj_root)
 
 use_condaenv("cyclum_env", required = TRUE)
 
-input_dir <- file.path(proj_root, "data/GSM4286760")
+input_dir <- file.path(proj_root, "data/mme95/tpm")
 
 system2(
   command = py_config()$python,

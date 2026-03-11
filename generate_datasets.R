@@ -1,6 +1,6 @@
 source(file.path(proj_root, "run_dyngen.R"))
 
-generate_datasets <- function(n_cells, n_genes, n_replicates) {
+generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE) {
   
   model_config <- make_config(n_cells, n_genes)
   
@@ -9,8 +9,11 @@ generate_datasets <- function(n_cells, n_genes, n_replicates) {
     
     fname_base <- sprintf("c%dg%d_%d", ncol(sim$expression), nrow(sim$expression), i)
     
-    h5_file <- here::here("data", "dyngen", paste0(fname_base, ".h5"))
-    sim_file <- here::here("data", "dyngen", paste0(fname_base, "_sim.rds"))
+    # Determine subdirectory based on is_tuning flag
+    subdir <- if (is_tuning) file.path("data", "dyngen", "tuning") else file.path("data", "dyngen", "extra")
+    
+    h5_file <- here::here(subdir, paste0(fname_base, ".h5"))
+    sim_file <- here::here(subdir, paste0(fname_base, "_sim.rds"))
     dir.create(dirname(h5_file), showWarnings = FALSE, recursive = TRUE)
     
     mat2hdf(sim$expression, h5_file)
@@ -23,12 +26,12 @@ generate_datasets <- function(n_cells, n_genes, n_replicates) {
   }
 }
 
-# generate_all_data <- function() {
-#   for (i in c(50, 100, 250, 500, 1000, 2500, 5000)) {
-#     for (j in c(50, 200, 500, 2000, 5000)) {
-#       generate_datasets(n_cells = i, n_genes = j, n_replicates = 10)
-#     }
-#   }
-# }
+generate_data <- function() {
+  for (i in c(5000)) {
+    generate_datasets(n_cells = 1000, n_genes = i, n_replicates = 10, is_tuning = FALSE)
+  }
+}
+generate_data()
 
-generate_datasets(n_cells = 1000, n_genes = 200, n_replicates = 1)
+# Generate separate tuning datasets
+#generate_datasets(n_cells = 1000, n_genes = 200, n_replicates = 10, is_tuning = TRUE)

@@ -10,31 +10,16 @@ source(file.path(proj_root, "dyngen_utils.R"))
 
 direct_only <- FALSE
 
-algorithms  <- c("scPrisma", "Cyclum")
+algorithms  <- c("scPrisma", "Cyclum", "Oscope")
 dyngen_dir  <- file.path(proj_root, "data/dyngen")
 cyclum_dir  <- file.path(proj_root, "data/dyngen/cyclum")
 scPrisma_dir <- file.path(proj_root, "data/dyngen/scPrisma")
+oscope_dir <- file.path(proj_root, "data/dyngen/oscope")
 expr_files  <- list.files(dyngen_dir, pattern = "\\.h5$", full.names = TRUE)
 results     <- list()
 
 # runtimes must be defined somewhere — placeholder here
 # runtimes <- read.csv(file.path(proj_root, "runtimes.csv"))
-
-get_model_scores <- function(algorithm, file_name, expr_file) {
-  if (algorithm == "Cyclum") {
-    weight_file <- file.path(cyclum_dir, paste0(file_name, "_Cyclum.h5"))
-    if (!file.exists(weight_file)) return(NULL)
-    get_scores(expr_file, weight_file)
-    
-  } else if (algorithm == "scPrisma") {
-    results_file <- file.path(scPrisma_dir, paste0(file_name, "_scPrisma.csv"))
-    if (!file.exists(results_file)) return(NULL)
-    read.csv(results_file)
-    
-  } else {
-    stop(paste("Unknown algorithm:", algorithm))
-  }
-}
 
 for (expr_file in expr_files) {
   fname <- tools::file_path_sans_ext(basename(expr_file))

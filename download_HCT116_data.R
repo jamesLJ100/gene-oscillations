@@ -1,8 +1,8 @@
 if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
 BiocManager::install("GEOquery")
-#library(GEOquery)
-#library(data.table)
-#library(biomaRt)
+library(GEOquery)
+library(data.table)
+library(biomaRt)
 
 # Create directory structure if not present
 dirs <- c(
@@ -11,7 +11,7 @@ dirs <- c(
 for (d in dirs) dir.create(d, recursive = TRUE, showWarnings = FALSE)
 
 # download data -- hct116
-#getGEOSuppFiles("GSM4286760", destdir = "data/GSM4286760")
+getGEOSuppFiles("GSM4286760", basedir = "data/GSM4286760")
 #Mouse E9.5 Posterior
 #getGEOSuppFiles("GSM3137206", destdir = "data/GSM3137206")
 #getGEOSuppFiles("GSE114186", destdir = "data/GSE114186")
@@ -29,9 +29,9 @@ for (d in dirs) dir.create(d, recursive = TRUE, showWarnings = FALSE)
 # print(pheno[, c("title", "geo_accession", "characteristics_ch1")])
 
 #Realnet
-realnet_url <- "https://github.com/dynverse/dyngen/raw/data_files/regulatorycircuits_26_neuron-associated_cells_cancer.rds"
-download.file(realnet_url, destfile = here::here("data", "realnet.rds"), mode = "wb")
-
-#Realcount
-realcount_url <- "https://github.com/dynverse/dyngen/raw/data_files/zenodo_1443566_real_gold_developing-dendritic-cells_schlitzer.rds"
-download.file(realcount_url, destfile = here::here("data", "realcount.rds"), mode = "wb")
+# realnet_url <- "https://github.com/dynverse/dyngen/raw/data_files/regulatorycircuits_26_neuron-associated_cells_cancer.rds"
+# download.file(realnet_url, destfile = here::here("data", "realnet.rds"), mode = "wb")
+# 
+# #Realcount
+# realcount_url <- "https://github.com/dynverse/dyngen/raw/data_files/zenodo_1443566_real_gold_psc-astrocyte-maturation-neuron_sloan.rds"
+# download.file(realcount_url, destfile = here::here("data", "realcount.rds"), mode = "wb")
