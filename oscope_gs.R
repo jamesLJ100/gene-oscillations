@@ -7,22 +7,22 @@ setwd(proj_root)
 source(file.path(proj_root, "run_oscope.R"))
 
 # Define grid search parameters
-#KM_quan_values <- c(0.95, 0.75, 0.5, 0.25, 0.05)
+
+#0.95, 0.75, 0.5, 0.25, 
 KM_quan_values <- c(0.05)
-#FlagCluster_qt_values <- c(0.90, 0.95, 0.85)
-FlagCluster_qt_values <- c(0.90)
-#FlagCluster_thre_values <- c(pi/5, pi/4, pi/3)
-FlagCluster_thre_values <- c(pi/4)
+FlagCluster_qt_values <- c(0.90, 0.95, 0.85)
+FlagCluster_thre_values <- c(pi/5, pi/4, pi/3)
+CalcMV_MeanCutLow_values <- c(0.1, 1, 10) 
+
 
 # Fixed parameters (not part of grid search)
-fixed_KM_maxK <- 10
-fixed_CalcMV_MeanCutLow <- 0.1
+fixed_KM_maxK <- 50
 
 # Input directory
 input_dir <- file.path(proj_root, "data/dyngen/tuning")
 
 # Total combinations
-total_runs <- length(KM_quan_values) * length(FlagCluster_qt_values) * length(FlagCluster_thre_values)
+total_runs <- length(KM_quan_values) * length(FlagCluster_qt_values) * length(FlagCluster_thre_values) * length(CalcMV_MeanCutLow_values)
 cat(sprintf("Starting Oscope grid search with %d total combinations\n", total_runs))
 
 # Initialize data frame to store run information
@@ -43,6 +43,7 @@ run_counter <- 0
 for (km_quan in KM_quan_values) {
   for (flag_qt in FlagCluster_qt_values) {
     for (flag_thre in FlagCluster_thre_values) {
+      for (calcMV_meancutlow in CalcMV_MeanCutLow_values) {
       run_counter <- run_counter + 1
       
       cat(sprintf("\n========================================\n"))
@@ -51,14 +52,14 @@ for (km_quan in KM_quan_values) {
       cat(sprintf("FlagCluster_qt: %.2f\n", flag_qt))
       cat(sprintf("FlagCluster_thre: %.4f (%.2f rad)\n", flag_thre, flag_thre))
       cat(sprintf("KM_maxK: %d (fixed)\n", fixed_KM_maxK))
-      cat(sprintf("CalcMV_MeanCutLow: %.2f (fixed)\n", fixed_CalcMV_MeanCutLow))
+      cat(sprintf("CalcMV_MeanCutLow: %.2f \n", calcMV_meancutlow))
       cat(sprintf("========================================\n\n"))
       
       # Build oscope_config for this run
       oscope_config <- list(
         KM_maxK           = fixed_KM_maxK,
         KM_quan           = km_quan,
-        CalcMV_MeanCutLow = fixed_CalcMV_MeanCutLow,
+        CalcMV_MeanCutLow = calcMV_meancutlow,
         FlagCluster_qt    = flag_qt,
         FlagCluster_thre  = flag_thre,
         Normalise=TRUE
@@ -79,9 +80,10 @@ for (km_quan in KM_quan_values) {
         FlagCluster_qt = flag_qt,
         FlagCluster_thre = flag_thre,
         KM_maxK = fixed_KM_maxK,
-        CalcMV_MeanCutLow = fixed_CalcMV_MeanCutLow,
+        CalcMV_MeanCutLow = calcMV_meancutlow,
         stringsAsFactors = FALSE
       ))
+      }
     }
   }
 }

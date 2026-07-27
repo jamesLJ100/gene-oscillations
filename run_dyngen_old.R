@@ -18,13 +18,13 @@ backbone_cycle_simple <- function() {
   module_info <- tribble(
     ~module_id, ~basal, ~burn, ~independence,
     "A", 1, TRUE, 1,
-    # "X", 1, TRUE, 1,
-    "B", 0, TRUE, 1,
-    "C", 0, TRUE, 1,
-    "D", 0, TRUE, 1
-    # "Y", 0, FALSE, 1,
-    # "Z", 1, TRUE, 1
+    "B", 0, FALSE, 1,
+    "C", 0, FALSE, 1,
+    "D", 0, FALSE, 1,
+    "E", 0, FALSE, 1,
+    "F", 1, TRUE, 1
   )
+
   
   module_network <- tribble(
     ~from, ~to, ~effect, ~strength, ~hill,
@@ -32,20 +32,14 @@ backbone_cycle_simple <- function() {
     "B", "C", 1L, 1, 2,
     "C", "D", 1L, 1, 2,
     "D", "B", -1L, 100, 2
-    # "X", "Y", 1L, 10, 2,
-    # "Y", "Z", -1L, 10, 2
   )
   
   expression_patterns <- tribble(
     ~from, ~to, ~module_progression, ~start, ~burn, ~time,
-    # "s0", "s1", "+A,+X,+B,+C,+Z", TRUE, TRUE, 100,
-    # "s1", "s2", "+D,-C,+Y", FALSE, FALSE, 100,
-    # "s2", "s3", "+C,-A,-B", FALSE, FALSE, 100,
-    # "s3", "s1", "+A,+B,-D", FALSE, FALSE, 100
-    "s0", "s1", "+A,+B,+C", TRUE, TRUE, 100,
-    "s1", "s2", "+D,-C", FALSE, FALSE, 100,
-    "s2", "s3", "+C,-B", FALSE, FALSE, 100,
-    "s3", "s1", "+B,-D", FALSE, FALSE, 100
+    "sBurn", "s1", "+A", TRUE, TRUE, 100,
+    "s1", "s2", "+B,-A", FALSE, FALSE, 100,
+    "s2", "s3", "+C", FALSE, FALSE, 100,
+    "s3", "s1", "+D", FALSE, FALSE, 500
   )
   
   backbone(module_info, module_network, expression_patterns)
@@ -55,8 +49,8 @@ make_config <- function(n_cells, n_genes) {
   list(
     num_cells    = n_cells,
     num_tfs      = 4L,
-    num_targets  = n_genes,
-    num_hks      = 0,
+    num_targets  = n_genes/2,
+    num_hks      = n_genes/2,
     census_interval = 2,
     tau_seconds     = 30 / 3600,
     weight_bw       = 0.1,
@@ -64,8 +58,7 @@ make_config <- function(n_cells, n_genes) {
     min_tfs_per_module = 1L,
     max_in_degree      = 1L,
     damping            = 0.01,
-    target_resampling  = Inf,
-    num_simulations = 50
+    target_resampling  = Inf
   )
 }
 
@@ -92,11 +85,7 @@ run_simulation <- function(model_config) {
     gold_standard_params = gold_standard_default(),
     simulation_params = simulation_default(
       census_interval = model_config$census_interval,
-      ssa_algorithm = ssa_etl(tau = model_config$tau_seconds),
-      experiment_params = bind_rows(
-        simulation_type_wild_type(num_simulations = model_config$num_simulations),
-        simulation_type_knockdown(num_simulations = 0)
-      )
+      ssa_algorithm = ssa_etl(tau = model_config$tau_seconds)
     ),
     experiment_params = experiment_snapshot(
       realcount = realcount_data,
@@ -113,29 +102,13 @@ run_simulation <- function(model_config) {
   out <- dyngen::generate_dataset(model, format = "dyno")
   model <- out$model
   expression <- t(as.matrix(out$dataset$expression))
-  
+
   list(
     model = model,
     expression = expression
   )
 }
 
-model_config <- make_config(200, 200)
-sim          <- run_simulation(model_config)
+model_config <- make_config(1000, 2000)
+sim <- run_simulation(model_config)
 
-fname_base <- sprintf("test_%dgenes_%dcells", nrow(sim$expression), ncol(sim$expression))
-
-subdir   <- proj_root
-h5_file  <- here::here(subdir, paste0(fname_base, ".h5"))
-sim_file <- here::here(subdir, paste0(fname_base, "_sim.rds"))
-dir.create(dirname(h5_file), showWarnings = FALSE, recursive = TRUE)
-
-mat2hdf(sim$expression, h5_file)
-saveRDS(sim, sim_file)
-
-cat("Saved to:", h5_file, "\n")
-cat("Dimensions:", nrow(sim$expression), "genes ×", ncol(sim$expression), "cells\n")
-cat("Row names (genes):", length(rownames(sim$expression)), "saved\n")
-cat("Column names (cells):", length(colnames(sim$expression)), "saved\n")
-
-plot_simulation_expression(sim$model, 1, what = "mol_mrna")

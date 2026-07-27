@@ -2,6 +2,7 @@ import pandas as pd
 import os
 import sys
 import glob
+import time
 import numpy as np
 import scanpy as sc
 import scPrisma
@@ -22,10 +23,11 @@ def hdf2adata(file_path):
     
     return adata
 
-
+#Takes UMI data.
 def load_and_preprocess_data(file_path, n_top_genes=5000):
     adata = hdf2adata(file_path)
     
+    #Should be cells x genes
     print(f"Shape: {adata.shape}")
     print(f"obs (rows) first 5: {adata.obs.index[:5].tolist()}")
     print(f"var (cols) first 5: {adata.var.index[:5].tolist()}")
@@ -80,32 +82,39 @@ def get_cyclic_gene_scores(adata, regularisation_strength=0.1, iternum=100):
 
 def process_file(input_path, output_dir, args):
     print(f'Processing file: {input_path}')
-    
+
     # Step 1: load and preprocess
     adata = load_and_preprocess_data(input_path, n_top_genes=args.n_top_genes)
-    
+
+    start_time = time.time()
+
     # Step 2: order cells along the cycle
     filtered_adata, _, _ = apply_cyclic_reconstruction(adata, iternum=args.iternum)
-    
+
     # Step 3: score genes by cyclicity
     scores_df = get_cyclic_gene_scores(
-        filtered_adata, 
+        filtered_adata,
         regularisation_strength=args.regularisation_strength,
         iternum=args.iternum
     )
-    
+
+    elapsed = time.time() - start_time
+
     fname = os.path.splitext(os.path.basename(input_path))[0]
-    
+
     # Add run number to filename if specified
     if args.run_number is not None:
         output_filename = f'{fname}_r{args.run_number}.csv'
     else:
         output_filename = f'{fname}.csv'
-    
+
     output_path = os.path.join(output_dir, output_filename)
-    
+
     scores_df.to_csv(output_path, index=False)
     print(f'Saved cyclic scores to: {output_path}')
+    print(f'Runtime: {elapsed:.2f}s')
+
+    return {"file": fname, "runtime_seconds": elapsed}
 
 
 def main():
@@ -132,7 +141,11 @@ Examples:
                         help='Run number to append to output filenames')
     
     args = parser.parse_args()
-    
+
+    # Echo the arguments this script was called with
+    print(f"Called with: {' '.join(sys.argv)}")
+    print(f"Parsed arguments: {vars(args)}")
+
     # Validate input directory
     input_dir_abs = os.path.abspath(args.input_dir)
     print(f"Current working directory: {os.getcwd()}")
@@ -166,11 +179,18 @@ Examples:
         sys.exit(1)
     
     # Process each file
+    timing_records = []
     for idx, file_path in enumerate(data_files, 1):
         print(f"\n{'='*60}")
         print(f"Processing file {idx}/{len(data_files)}: {os.path.basename(file_path)}")
         print(f"{'='*60}")
-        process_file(file_path, output_dir, args)
+        record = process_file(file_path, output_dir, args)
+        timing_records.append(record)
+
+    timing_df = pd.DataFrame(timing_records)
+    csv_path = os.path.join(output_dir, 'runtimes.csv')
+    timing_df.to_csv(csv_path, index=False)
+    print(f"\nRuntimes saved to: {csv_path}")
 
 
 if __name__ == "__main__":

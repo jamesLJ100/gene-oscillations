@@ -6,13 +6,15 @@ library(tidyr)
 proj_root <- here::here()
 setwd(proj_root)
 source(file.path(proj_root, "hdfrw.R"))
-source(file.path(proj_root, "cyclum_helper.R"))
+source(file.path(proj_root, "utils.R"))
 source(file.path(proj_root, "dyngen_utils.R"))
 
 direct_only <- FALSE
 
-algorithms  <- c("scPrisma", "Cyclum", "Oscope")
-dyngen_dir  <- file.path(proj_root, "data/dyngen/tuning")
+#algorithms  <- c("scPrisma", "cyclum", "oscope")
+algorithms  <- c("scPrisma")
+
+dyngen_dir  <- file.path(proj_root, "data/dyngen/gridsearch")
 cyclum_dir  <- file.path(dyngen_dir, "cyclum")
 scPrisma_dir <- file.path(dyngen_dir, "scPrisma")
 oscope_dir <- file.path(dyngen_dir, "oscope")
@@ -20,9 +22,9 @@ expr_files  <- list.files(dyngen_dir, pattern = "\\.h5$", full.names = TRUE)
 
 # Load hyperparameter grid search logs for each algorithm
 algorithm_dirs <- list(
-  "Cyclum" = cyclum_dir,
+  "cyclum" = cyclum_dir,
   "scPrisma" = scPrisma_dir,
-  "Oscope" = oscope_dir
+  "oscope" = oscope_dir
 )
 
 hyperparam_configs <- list()
@@ -57,28 +59,6 @@ extract_dataset_id <- function(filename) {
   sub("g\\d+_(\\d+)_r", "\\1", match)
 }
 
-get_model_scores <- function(algorithm, file_name, expr_file, run_id) {
-  if (algorithm == "Cyclum") {
-    # New format: c1000g204_1_r1_cyclum.h5
-    weight_file <- file.path(cyclum_dir, paste0(file_name, "_r", run_id, "_cyclum.h5"))
-    if (!file.exists(weight_file)) return(NULL)
-    get_scores(expr_file, weight_file)
-    
-  } else if (algorithm == "scPrisma") {
-    results_file <- file.path(scPrisma_dir, paste0(file_name, "_r", run_id, "_scPrisma.csv"))
-    if (!file.exists(results_file)) return(NULL)
-    read.csv(results_file)
-    
-  } else if (algorithm == "Oscope") {
-    results_file <- file.path(oscope_dir, paste0(file_name, "_r", run_id, "_oscope.csv"))
-    if (!file.exists(results_file)) return(NULL)
-    read.csv(results_file)
-    
-  } else {
-    stop(paste("Unknown algorithm:", algorithm))
-  }
-}
-
 for (expr_file in expr_files) {
   fname <- tools::file_path_sans_ext(basename(expr_file))
   
@@ -89,20 +69,7 @@ for (expr_file in expr_files) {
     next
   }
   sim <- readRDS(sim_file)
-  
-  # Extract ground truth labels once
-  feature_net <- sim[["model"]][["feature_network"]]
-  
-  tf_modules <- feature_net %>%
-    filter(!is.na(from_module)) %>%
-    select(gene = from, module = from_module) %>%
-    distinct()
-  
-  target_edges <- feature_net %>%
-    filter(grepl("^Target", to)) %>%
-    select(from, to)
-  
-  gene_module_assignments <- propagate_module_assignments(tf_modules, target_edges)
+  gene_module_assignments <- propagate_module_assignments(sim, context = fname)
   
   cycling_genes <- gene_module_assignments %>%
     filter(module %in% c("B", "C", "D")) %>%
@@ -141,9 +108,9 @@ for (expr_file in expr_files) {
     
     for (run_id in algo_hyperparams$run_counter) {
       cat("Processing:", fname, "with", algorithm, "run_id:", run_id, "\n")
-      
+
       algorithm_results_df <- tryCatch(
-        get_model_scores(algorithm, fname, expr_file, run_id),
+        get_model_scores(algorithm, dyngen_dir, fname, run_id),
         error = function(e) { 
           cat("Error with", fname, algorithm, "run_id", run_id, "-", conditionMessage(e), "\n")
           NULL 

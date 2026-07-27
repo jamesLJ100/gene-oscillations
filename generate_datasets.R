@@ -1,3 +1,6 @@
+rm(list=ls())
+proj_root <- here::here()
+setwd(proj_root)
 source(file.path(proj_root, "run_dyngen.R"))
 
 generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE) {
@@ -10,7 +13,7 @@ generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE)
     fname_base <- sprintf("c%dg%d_%d", ncol(sim$expression), nrow(sim$expression), i)
     
     # Determine subdirectory based on is_tuning flag
-    subdir <- if (is_tuning) file.path("data", "dyngen", "tuning") else file.path("data", "dyngen", "extra")
+    subdir <- if (is_tuning) file.path("data", "dyngen_new", "gridsearch") else file.path("data", "dyngen_new")
     
     h5_file <- here::here(subdir, paste0(fname_base, ".h5"))
     sim_file <- here::here(subdir, paste0(fname_base, "_sim.rds"))
@@ -27,9 +30,14 @@ generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE)
 }
 
 generate_data <- function() {
+  #50, 200, 500, 2000, 
   for (i in c(5000)) {
-    generate_datasets(n_cells = 1000, n_genes = i, n_replicates = 10, is_tuning = FALSE)
+    generate_datasets(n_cells = 1000, n_genes = i, n_replicates = 5, is_tuning = FALSE)
   }
+  for (i in c(50, 100, 250, 500, 2500, 5000)) {
+    generate_datasets(n_cells = i, n_genes = 200, n_replicates = 5, is_tuning = FALSE)
+  }
+  #generate_datasets(n_cells = 5000, n_genes = 200, n_replicates = 5, is_tuning = FALSE)
 }
 generate_data()
 

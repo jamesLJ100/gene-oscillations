@@ -5,6 +5,8 @@ proj_root <- here::here()
 setwd(proj_root)
 use_condaenv("cyclum_env", required = TRUE)
 
+#TODO nonlinear_reg & check for others.
+
 # Define grid search parameters
 encoder_widths <- list(
   c(30, 20),
@@ -14,7 +16,7 @@ encoder_widths <- list(
   c(60, 40, 20)
 )
 
-epochs_list <- c(300, 500, 1000)
+epochs_list <- c(300, 500, 700)
 
 learning_rates <- c(1e-4, 2e-4, 5e-4, 1e-3)
 

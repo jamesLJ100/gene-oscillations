@@ -5,10 +5,19 @@
 *.RData
 *RDataTmp*
 *.RProj
+*.gz
+*.tar
+*.png
+*.pdf
+*.zip
+*.pickle
+
 
 
 # You can also exclude directories
 data/
+data_old/
+data_test/
 logs/
 scPrisma/
 .Rproj.user/

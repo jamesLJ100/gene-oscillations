@@ -12,7 +12,7 @@ library(dplyr)
 library(ggplot2)
 
 # Select genes to plot
-genes_to_plot <- c("A_TF1", "B_TF1", "C_TF1")
+genes_to_plot <- c("Target7", "Target3", "Target92")
 
 ## define project root
 proj_root <- here::here()
@@ -23,7 +23,6 @@ source(file.path(proj_root, "dyngen_utils.R"))
 
 ## create directories
 fig_dir <- "figures"
-data_dir <- "data"
 dir.create(fig_dir, showWarnings = FALSE)
 dir.create(data_dir, showWarnings = FALSE)
 
@@ -54,7 +53,7 @@ model_config <- list(
   target_resampling  = Inf
 )
 
-sim_file <- file.path(data_dir, "dyngen", "extra", "c1000g5004_1_sim.rds")
+sim_file <- file.path(proj_root, "tests", "data", "c1000g2004_1_sim.rds")
 if (file.exists(sim_file)) {
   sim <- readRDS(sim_file)
   cat(" Simulation loaded from disk (0 seconds)!\n")

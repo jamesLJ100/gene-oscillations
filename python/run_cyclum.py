@@ -19,6 +19,7 @@ tf.random.set_seed(42)
 
 MAX_LINEAR_DIMS = 5
 
+#TODO should take UMI data.
 def process_data_file(file_path, encoder_width, epochs, learning_rate, run_number):
     print(f"Processing file: {file_path}")
     print(f"Parameters: encoder_width={encoder_width}, epochs={epochs}, learning_rate={learning_rate}")

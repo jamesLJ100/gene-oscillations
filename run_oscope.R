@@ -1,3 +1,4 @@
+rm(list=ls())
 library(Oscope)
 library(here)
 library(hdf5r)
@@ -176,85 +177,9 @@ process_data_file <- function(file_path, oscope_config, run_number = NULL) {
       run_suffix <- ""
     }
     
-    # Plot DiffMat epsilon^2 distribution
-    if (!is.null(result$SineRes)) {
-      raw_vals  <- result$SineRes$DiffMat[upper.tri(result$SineRes$DiffMat)]
-      diff_vals <- -log10(raw_vals)          # match OscopeKM's internal scale
-      diff_vals <- diff_vals[is.finite(diff_vals)]   # drop -Inf from log10(0)
-      
-      # Calculate cutoff
-      cutoff_val <- quantile(diff_vals, oscope_config$KM_quan, na.rm = TRUE)
-      
-      plot_path <- file.path(output_dir, sprintf('%s%s_diffmat_dist.png', fname, run_suffix))
-      png(plot_path, width = 800, height = 500)
-      hist(diff_vals,
-           breaks = 100,
-           main   = sprintf("DiffMat similarity scores\n%s (n=%d gene pairs)", fname, length(diff_vals)),
-           xlab   = expression(paste("-log"[10], "(", epsilon^2, ")")),
-           ylab   = "Frequency",
-           col    = "steelblue",
-           border = "white")
-      abline(v = cutoff_val,
-             col = "red", lwd = 2, lty = 2)
-      legend("topright",
-             legend = sprintf("quan=%.2f cutoff (%.3f)", oscope_config$KM_quan, cutoff_val),
-             col = "red", lty = 2, lwd = 2, bg = "white")
-      dev.off()
-      cat(sprintf("DiffMat plot saved to: %s\n", plot_path))
-      
-      # NEW: Plot distribution of SineRes Phi (phase) and Amp (amplitude) values
-      if (!is.null(result$SineRes$PhaseKStatistic) && !is.null(result$SineRes$Amp)) {
-        plot_path_sine <- file.path(output_dir, sprintf('%s%s_sineres_dist.png', fname, run_suffix))
-        png(plot_path_sine, width = 1200, height = 500)
-        par(mfrow = c(1, 3))
-        
-        # 1. Phase distribution
-        phase_vals <- result$SineRes$PhaseKStatistic
-        phase_vals <- phase_vals[is.finite(phase_vals)]
-        if (length(phase_vals) > 0) {
-          hist(phase_vals,
-               breaks = 50,
-               main   = sprintf("Phase estimates\n(n=%d genes)", length(phase_vals)),
-               xlab   = "Phase (radians)",
-               ylab   = "Frequency",
-               col    = "coral",
-               border = "white")
-        }
-        
-        # 2. Amplitude distribution
-        amp_vals <- result$SineRes$Amp
-        amp_vals <- amp_vals[is.finite(amp_vals)]
-        if (length(amp_vals) > 0) {
-          hist(amp_vals,
-               breaks = 50,
-               main   = sprintf("Amplitude estimates\n(n=%d genes)", length(amp_vals)),
-               xlab   = "Amplitude",
-               ylab   = "Frequency",
-               col    = "lightgreen",
-               border = "white")
-        }
-        
-        # 3. DiffMat with quantile cutoff (same as before but in panel)
-        hist(diff_vals,
-             breaks = 100,
-             main   = sprintf("Pairwise similarity\n(quan=%.2f)", oscope_config$KM_quan),
-             xlab   = expression(paste("-log"[10], "(", epsilon^2, ")")),
-             ylab   = "Frequency",
-             col    = "steelblue",
-             border = "white")
-        abline(v = cutoff_val, col = "red", lwd = 2, lty = 2)
-        legend("topright",
-               legend = sprintf("Cutoff: %.3f", cutoff_val),
-               col = "red", lty = 2, lwd = 2, bg = "white", cex = 0.8)
-        
-        dev.off()
-        cat(sprintf("SineRes distributions plot saved to: %s\n", plot_path_sine))
-      }
-    }
-    
     gene_classification <- result$gene_classification
     if (!is.null(gene_classification)) {
-      csv_path <- file.path(output_dir, sprintf('%s%s_oscope.csv', fname, run_suffix))
+      csv_path <- file.path(output_dir, sprintf('%s%s.csv', fname, run_suffix))
       
       gene_df <- gene_classification[, c("gene", "is_oscillating")]
       colnames(gene_df) <- c("symbol", "score")
@@ -276,17 +201,18 @@ process_data_file <- function(file_path, oscope_config, run_number = NULL) {
       n_genes         = nrow(df),
       n_samples       = ncol(df),
       n_oscillating   = if (!is.null(gene_classification)) sum(gene_classification$is_oscillating, na.rm = TRUE) else 0,
+      error           = NA_character_,
       stringsAsFactors = FALSE
     ))
-    
+
   }, error = function(e) {
     cat(sprintf("Error processing file %s: %s\n", file_path, e$message))
     return(data.frame(
       file            = basename(file_path),
-      runtime_seconds = NA,
-      n_genes         = NA,
-      n_samples       = NA,
-      n_oscillating   = NA,
+      runtime_seconds = NA_real_,
+      n_genes         = NA_integer_,
+      n_samples       = NA_integer_,
+      n_oscillating   = NA_integer_,
       error           = e$message,
       stringsAsFactors = FALSE
     ))
@@ -337,14 +263,7 @@ run_oscope <- function(input_dir, oscope_config, run_number = NULL) {
   timing_df <- do.call(rbind, timing_records)
   
   output_dir <- file.path(input_dir_abs, 'oscope')
-  
-  # Add run_number to runtimes filename if provided
-  if (!is.null(run_number)) {
-    csv_filename <- sprintf('runtimes_r%d.csv', run_number)
-  } else {
-    csv_filename <- 'runtimes.csv'
-  }
-  
+  csv_filename <- 'runtimes.csv'
   csv_path <- file.path(output_dir, csv_filename)
   write.csv(timing_df, csv_path, row.names = FALSE)
   
@@ -354,15 +273,14 @@ run_oscope <- function(input_dir, oscope_config, run_number = NULL) {
   print(timing_df)
 }
 
+oscope_config <- list(
+  KM_maxK           = 50,
+  KM_quan           = 0.05,
+  CalcMV_MeanCutLow = 0.1,
+  FlagCluster_qt    = 0.9,
+  FlagCluster_thre  = pi/4,
+  Normalise=TRUE
+)
+input_dir <- file.path(proj_root, "data/dyngen_new")
+run_oscope(input_dir, oscope_config)
 
-# oscope_config <- list(
-#   KM_maxK           = 10,
-#   KM_quan           = 0.95,
-#   CalcMV_MeanCutLow = 0.1,
-#   FlagCluster_qt    = 0.9,
-#   FlagCluster_thre  = pi/4,
-#   Normalise = TRUE
-#   
-# )
-# data(OscopeExampleData)
-# apply_oscope(OscopeExampleData, oscope_config)

@@ -6,7 +6,7 @@ setwd(proj_root)
 
 use_condaenv("cyclum_env", required = TRUE)
 
-input_dir <- file.path(proj_root, "data/mme95/tpm")
+input_dir <- file.path(proj_root, "data/dyngen_new")
 
 system2(
   command = py_config()$python,
