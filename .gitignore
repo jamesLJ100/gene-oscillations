@@ -4,7 +4,6 @@
 *.csv
 *.RData
 *RDataTmp*
-*.RProj
 *.gz
 *.tar
 *.png
@@ -16,12 +15,12 @@
 
 # You can also exclude directories
 data/
-data_old/
-data_test/
-logs/
-scPrisma/
 .Rproj.user/
 
 # Or specific files
 config.json
 secrets.txt
+
+# OS / IDE session artifacts
+.DS_Store
+.Rhistory
