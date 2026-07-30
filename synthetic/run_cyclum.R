@@ -3,12 +3,8 @@ library(here)
 
 proj_root <- here::here()
 setwd(proj_root)
+source(file.path(proj_root, "algorithms/run_cyclum.R"))
 
 use_condaenv("cyclum_env", required = TRUE)
 
-input_dir <- file.path(proj_root, "synthetic/data/dyngen_new")
-
-system2(
-  command = py_config()$python,
-  args    = c("-u", "python/run_cyclum.py", input_dir)
-)
+run_cyclum(input_dir = file.path(proj_root, "synthetic/data/dyngen_new"))

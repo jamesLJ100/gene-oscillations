@@ -111,8 +111,8 @@ print(table(meta_pm$cluster))
 # data should use "read counts normalized and log2 transformed" rather than TPM — gene-length
 # normalization corrects a bias that read-count protocols have and UMI counting doesn't. The
 # paper also says not to filter out genes. Both downstream algorithms take these raw UMI counts
-# directly and do their own normalization: scPrisma's runner (python/run_scPrisma.py) applies
-# sc.pp.normalize_total/log1p, and Cyclum's runner (python/run_cyclum.py) applies CPM + log2 +
+# directly and do their own normalization: scPrisma's runner (algorithms/run_scPrisma.py) applies
+# sc.pp.normalize_total/log1p, and Cyclum's runner (algorithms/run_cyclum.py) applies CPM + log2 +
 # per-gene scaling — so there's a single shared input file type instead of a separate TPM/CPM
 # preprocessing step here.
 

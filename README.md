@@ -14,16 +14,24 @@ RNA-seq data, using [Cyclum](https://github.com/KChen-lab/Cyclum) and
   WT / IkBaMM mouse BMDMs under TNF/LPS/PIC stimulation).
 - `synthetic/` — generation (via [dyngen](https://github.com/dynverse/dyngen)) and evaluation
   scripts for the synthetic benchmark datasets, plus grid-search/tuning variants.
-- `python/run_cyclum.py`, `python/run_scPrisma.py` — shared Python entry points invoked by the
-  R driver scripts (e.g. `segmentation_clock/run_cyclum.R`, `segmentation_clock/run_scPrisma.R`,
-  `myc/run_cyclum.R`, `myc/run_scPrisma.R`, `nfkb/run_cyclum.R`, `nfkb/run_scPrisma.R`,
-  `synthetic/run_cyclum.R`, `synthetic/run_scPrisma.R`) via `reticulate`.
+- `algorithms/` — one clearly-defined entry point per algorithm, each dataset's
+  `run_cyclum.R`/`run_scPrisma.R`/`run_oscope.R` calls into these rather than
+  re-inlining the invocation logic itself:
+  - `run_cyclum.py`, `run_cyclum.R` — the actual Python Cyclum CLI, and an R
+    `run_cyclum()` wrapper that shells out to it via `reticulate` (requires
+    `use_condaenv("cyclum_env")` first).
+  - `run_scPrisma.py`, `run_scPrisma.R` — same pattern for scPrisma
+    (`use_condaenv("scPrisma_env")` first).
+  - `run_oscope.R` — Oscope is an R/Bioconductor package, so `run_oscope()` runs
+    in-process rather than shelling out to a separate script.
 - `common/` — shared R helpers sourced by all of the above:
   - `hdfrw.R` — `.h5` read/write (`mat2hdf()`/`hdf2mat()`).
   - `utils.R` — model-score loading (`get_cyclum_scores()`, `get_model_scores()`).
   - `gsea_functions.R` — Hallmark/GO/DoRothEA/TFEA.ChIP pathway analysis
     (`run_pathway_analyses()` and friends), used by every `analyse.R`.
   - `plotting_utils.R` — shared `theme_common()` for the score-comparison violin/boxplots.
+  - `grid_search.R` — algorithm-agnostic `run_grid_search()` hyperparameter-sweep driver,
+    used by `synthetic/cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R`.
 
 ## Environment setup
 
@@ -35,7 +43,7 @@ working directory to the repo root automatically — every script here assumes t
 of which script you run or click "Source" on. `*.Rproj` is gitignored, so this file has to exist
 locally in every clone; without it, `here::here()` falls back to whatever directory RStudio
 happened to start in (e.g. your home directory), and scripts fail with "file not found" errors
-for paths like `data/...` or `python/...`.
+for paths like `data/...` or `algorithms/...`.
 
 ### R prerequisites
 
@@ -124,7 +132,7 @@ currently crashes (`Mutation::Apply error ... fanout ... exist for missing node`
 through Cyclum's multi-phase training, once the model is rebuilt with a different number of
 linear dimensions — this is a known TensorFlow-on-Metal issue with the modern Adam optimizer
 graph, not a Cyclum bug (TF itself warns `tf.keras.optimizers.Adam` has problems on M1/M2
-Macs). `python/run_cyclum.py` already works around this by disabling the GPU on macOS
+Macs). `algorithms/run_cyclum.py` already works around this by disabling the GPU on macOS
 (`tf.config.set_visible_devices([], "GPU")`), so training runs correctly, just CPU-only, on
 Apple Silicon. Other platforms (Linux/Windows with a real GPU) are unaffected by that check and
 keep full GPU acceleration.
