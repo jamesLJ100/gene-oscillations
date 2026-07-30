@@ -1,5 +1,6 @@
 import glob
 import os
+import platform
 import sys
 import time
 import pandas as pd
@@ -17,20 +18,30 @@ random.seed(42)
 np.random.seed(42)
 tf.random.set_seed(42)
 
+if platform.system() == "Darwin":
+    # tensorflow-metal's graph optimizer currently crashes partway through Cyclum's
+    # multi-phase training (fatal error in the Adam-optimizer graph remapper) once the
+    # model is rebuilt with a different number of linear dimensions. Training on CPU
+    # avoids the Metal-specific codepath entirely and completes correctly.
+    tf.config.set_visible_devices([], "GPU")
+
 MAX_LINEAR_DIMS = 5
 
-#TODO should take UMI data.
-def process_data_file(file_path, encoder_width, epochs, learning_rate, run_number):
+def process_data_file(file_path, output_dir, encoder_width, epochs, learning_rate, run_number):
     print(f"Processing file: {file_path}")
     print(f"Parameters: encoder_width={encoder_width}, epochs={epochs}, learning_rate={learning_rate}")
-    
+
+    # Input files should hold raw UMI counts (cells as rows, genes as columns). Per the Cyclum
+    # paper's methods, droplet/UMI data should be "read counts normalized and log2
+    # transformed"
     df = hdf2mat(file_path)
     print(f"Matrix shape: {df.shape}")  # N.B. cells should be rows
     print(f"First few row names: {df.index[:5].tolist()}")
     print(f"First few col names: {df.columns[:5].tolist()}")
     print(df.head())
-    
-    df = np.log2(df + 1)
+
+    cpm = df.div(df.sum(axis=1), axis=0) * 1e6
+    df = np.log2(cpm + 1)
     df = pd.DataFrame(
         skl.preprocessing.scale(df),
         index=df.index,
@@ -52,9 +63,8 @@ def process_data_file(file_path, encoder_width, epochs, learning_rate, run_numbe
     
     elapsed = time.time() - start_time
     
-    filepath, fullflname = os.path.split(file_path)
+    fullflname = os.path.basename(file_path)
     fname, ext = os.path.splitext(fullflname)
-    output_dir = os.path.join(filepath, 'cyclum')
     os.makedirs(output_dir, exist_ok=True)
     
     if run_number is not None:
@@ -82,6 +92,8 @@ Examples:
     )
     
     parser.add_argument('input_dir', type=str, help='Input directory containing H5 files')
+    parser.add_argument('--output_dir', type=str, default=None,
+                        help='Output directory for results (default: <input_dir>/cyclum)')
     parser.add_argument('--encoder_width', nargs='+', type=int, default=[30, 20],
                         help='Encoder width layers (default: 30 20)')
     parser.add_argument('--epochs', type=int, default=500,
@@ -94,7 +106,10 @@ Examples:
     args = parser.parse_args()
     
     input_dir_abs = os.path.abspath(args.input_dir)
+    output_dir = os.path.abspath(args.output_dir) if args.output_dir else os.path.join(input_dir_abs, 'cyclum')
+    os.makedirs(output_dir, exist_ok=True)
     print(f"Current working directory: {os.getcwd()}")
+    print(f"Output directory: {output_dir}")
     print(f"Using parameters:")
     print(f"  Encoder width: {args.encoder_width}")
     print(f"  Epochs: {args.epochs}")
@@ -117,11 +132,10 @@ Examples:
     
     for idx, file_path in enumerate(data_files, 1):
         print(f"\nProcessing file {idx}/{len(data_files)}: {os.path.basename(file_path)}")
-        record = process_data_file(file_path, args.encoder_width, args.epochs, args.learning_rate, args.run_number)
+        record = process_data_file(file_path, output_dir, args.encoder_width, args.epochs, args.learning_rate, args.run_number)
         timing_records.append(record)
-    
+
     timing_df = pd.DataFrame(timing_records)
-    output_dir = os.path.join(input_dir_abs, 'cyclum')
     csv_path = os.path.join(output_dir, 'runtimes.csv')
     timing_df.to_csv(csv_path, index=False)
     print(f"\nRuntimes saved to: {csv_path}")

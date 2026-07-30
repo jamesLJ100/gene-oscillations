@@ -42,8 +42,9 @@ def load_and_preprocess_data(file_path, n_top_genes=5000):
     print(f"After log1p - max value: {adata.X.max():.3f}")
     
     sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes)
-    print(f"Highly variable genes: {adata.var['highly_variable'].sum()}")
-    
+    adata = adata[:, adata.var['highly_variable']].copy()
+    print(f"Highly variable genes retained: {adata.shape[1]}")
+
     return adata
 
 
@@ -129,7 +130,9 @@ Examples:
     )
     
     parser.add_argument('input_dir', type=str, help='Input directory containing H5 files')
-    
+    parser.add_argument('--output_dir', type=str, default=None,
+                        help='Output directory for results (default: <input_dir>/scPrisma)')
+
     # scPrisma-specific parameters
     parser.add_argument('--iternum', type=int, default=100,
                         help='Number of iterations for scPrisma algorithms (default: 100)')
@@ -158,7 +161,7 @@ Examples:
     print(f"Directory contents: {os.listdir(input_dir_abs)}")
     
     # Create output directory
-    output_dir = os.path.join(input_dir_abs, 'scPrisma')
+    output_dir = os.path.abspath(args.output_dir) if args.output_dir else os.path.join(input_dir_abs, 'scPrisma')
     os.makedirs(output_dir, exist_ok=True)
     
     # Find H5 files
