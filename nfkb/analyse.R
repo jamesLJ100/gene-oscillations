@@ -57,18 +57,10 @@ for (algorithm in c("cyclum", "scPrisma")) {
     cat("Processing:", fname, "\n")
     cat("========================================\n")
 
-    # Get model scores (results live in nfkb/results/<algorithm>/, separate from
-    # the input data in nfkb/data/GSE162992/processed/)
-    if (algorithm == "cyclum") {
-      weight_file <- file.path(results_dir, paste0(fname, ".h5"))
-      results_df  <- if (file.exists(weight_file)) get_cyclum_scores(input_data_file, weight_file) else NULL
-    } else if (algorithm == "scPrisma") {
-      results_file <- file.path(results_dir, paste0(fname, ".csv"))
-      results_df   <- if (file.exists(results_file)) read.csv(results_file) else NULL
-    } else {
-      stop("Unknown algorithm: ", algorithm)
+    results_df <- load_model_scores(algorithm, results_dir, input_data_file, fname)
+    if (is.null(results_df)) {
+      stop("No ", algorithm, " results found for ", fname, " in ", results_dir)
     }
-    if (is.null(results_df)) stop("No ", algorithm, " results found for ", fname, " in ", results_dir)
 
     geneList <- build_ranked_gene_list(results_df, org_db = org.Mm.eg.db)
 
@@ -99,7 +91,47 @@ for (algorithm in c("cyclum", "scPrisma")) {
     algorithm         = algorithm
   )
 
-  # ---- Score Distribution Comparison Plot -------------------------------------
+  # ---- Pairwise Hallmark Comparison Plots --------------------------------------
+  # wt_tnf vs ss_tnf: same stimulus, does the TNF response differ by genotype?
+  # wt_none vs wt_tnf: same genotype, what does TNF stimulation itself change?
+  plot_hallmark_comparison(
+    hallmark_a  = all_results[["wt_tnf"]]$hallmark,
+    hallmark_b  = all_results[["ss_tnf"]]$hallmark,
+    label_a     = "wt_tnf",
+    label_b     = "ss_tnf",
+    figures_dir = figures_dir,
+    algorithm   = algorithm
+  )
+  plot_hallmark_comparison(
+    hallmark_a  = all_results[["wt_none"]]$hallmark,
+    hallmark_b  = all_results[["wt_tnf"]]$hallmark,
+    label_a     = "wt_none",
+    label_b     = "wt_tnf",
+    figures_dir = figures_dir,
+    algorithm   = algorithm
+  )
+
+  # ---- Pairwise Oscillation Score Comparison Plots -----------------------------
+  # Gene-level analogue of the Hallmark comparison plots above: one point per gene
+  # rather than per pathway.
+  plot_score_comparison(
+    scores_a    = all_results[["wt_tnf"]]$scores,
+    scores_b    = all_results[["ss_tnf"]]$scores,
+    label_a     = "wt_tnf",
+    label_b     = "ss_tnf",
+    figures_dir = figures_dir,
+    algorithm   = algorithm
+  )
+  plot_score_comparison(
+    scores_a    = all_results[["wt_none"]]$scores,
+    scores_b    = all_results[["wt_tnf"]]$scores,
+    label_a     = "wt_none",
+    label_b     = "wt_tnf",
+    figures_dir = figures_dir,
+    algorithm   = algorithm
+  )
+
+  # ---- Score Distribution Comparison Plot --------------------------------------
   cat("\n=== Creating score distribution comparison plot ===\n")
 
   # Combine scores across all files
@@ -140,9 +172,8 @@ for (algorithm in c("cyclum", "scPrisma")) {
     ) +
     scale_fill_manual(values = color_values) +
     labs(
-      title = paste(algorithm, "- Score comparison"),
-      x     = "",
-      y     = paste(algorithm, "Score")
+      x = "",
+      y = paste(algorithm, "Score")
     ) +
     theme_common(14, angle_x_labels = TRUE)
 

@@ -4,42 +4,39 @@ library(hdf5r)
 source(file.path(proj_root, "common/hdfrw.R"))
 
 apply_oscope <- function(gene_expr_matrix, oscope_config) {
-  
-  #colSums(gene_expr_matrix)
-  
+
   KM_maxK           <- oscope_config$KM_maxK
   KM_quan           <- oscope_config$KM_quan
   CalcMV_MeanCutLow <- oscope_config$CalcMV_MeanCutLow
   FlagCluster_qt    <- oscope_config$FlagCluster_qt
   FlagCluster_thre  <- oscope_config$FlagCluster_thre
-  Normalise         <- oscope_config$Normalise
-  
+
   cat(sprintf("Config: KM_maxK=%d, KM_quan=%.2f, MeanCutLow=%.3f, FlagCluster_qt=%.2f, FlagCluster_thre=%.3f\n",
               KM_maxK, KM_quan, CalcMV_MeanCutLow, FlagCluster_qt, FlagCluster_thre))
-  
+
   gene_expr_matrix <- as.matrix(gene_expr_matrix)
   all_genes <- rownames(gene_expr_matrix)
   cat(sprintf("Input matrix: %d genes x %d samples\n",
               nrow(gene_expr_matrix), ncol(gene_expr_matrix)))
-  
-  #Norm
-  if (Normalise) {
-    
-    Sizes <- MedianNorm(gene_expr_matrix)
-    DataNorm <- GetNormalizedMat(gene_expr_matrix, Sizes)
-    #MV <- CalcMV(Data = gene_expr_matrix, Sizes = Sizes, MeanCutLow = CalcMV_MeanCutLow)
-    MV <- CalcMV(Data = DataNorm, Sizes = NULL, NormData = TRUE, MeanCutLow = CalcMV_MeanCutLow)
-    DataSubset <- DataNorm[MV$GeneToUse,]
-    
-    
-    
-  } else {
-    Sizes <- MedianNorm(gene_expr_matrix)
-    DataNorm <- gene_expr_matrix
-    MV <- CalcMV(Data = gene_expr_matrix, Sizes = Sizes, MeanCutLow = CalcMV_MeanCutLow)
-    DataSubset <- DataNorm[MV$GeneToUse,]
-  }
-  
+
+  # Cross-sample library-size normalization, always applied (no opt-out): MedianNorm()
+  # reproduces DESeq's median-of-ratios size factors, and GetNormalizedMat() applies them.
+  # This is Oscope's own recommended normalization (its vignette section 2.2), operating
+  # directly on raw counts with no gene-length correction - appropriate for our raw UMI
+  # input, the same way Cyclum/scPrisma are fed raw counts and normalize internally.
+  #
+  # Caveat: Oscope (Leng et al. 2015, Nature Methods) was developed and validated on the
+  # Fluidigm C1 platform - full-length, plate-based, non-UMI, predating droplet protocols.
+  # Correct normalization doesn't resolve this: Oscope's sine-fitting, its CalcMV_MeanCutLow
+  # dropout threshold, and its K-medoids clustering were never validated against droplet
+  # UMI data's much sparser, more zero-inflated profile. Treat Oscope's results on our
+  # datasets with more caution than Cyclum's/scPrisma's, whose own papers explicitly
+  # address droplet/UMI applicability.
+  Sizes      <- MedianNorm(gene_expr_matrix)
+  DataNorm   <- GetNormalizedMat(gene_expr_matrix, Sizes)
+  MV         <- CalcMV(Data = DataNorm, Sizes = NULL, NormData = TRUE, MeanCutLow = CalcMV_MeanCutLow)
+  DataSubset <- DataNorm[MV$GeneToUse,]
+
   # # Select high mean / high variance genes for sine model input
   # MV <- CalcMV(Data = gene_expr_matrix, Sizes = NULL, NormData = TRUE, MeanCutLow = CalcMV_MeanCutLow)
   # cat(sprintf("CalcMV: %d genes suggested (GeneToUse) out of %d total\n",
@@ -222,7 +219,8 @@ process_data_file <- function(file_path, oscope_config, run_number = NULL) {
 #'
 #' @param input_dir Directory containing input .h5 count files (non-`_sim.h5` files only)
 #' @param oscope_config List with elements KM_maxK, KM_quan, CalcMV_MeanCutLow,
-#'   FlagCluster_qt, FlagCluster_thre, Normalise
+#'   FlagCluster_qt, FlagCluster_thre. Cross-sample library-size normalization is
+#'   always applied internally (not configurable) - see apply_oscope() for why.
 #' @param run_number Optional integer appended to output filenames (for grid search / repeat runs)
 #' @return Invisibly NULL; per-file gene classifications are written to
 #'   <input_dir>/oscope/, and a combined runtimes.csv summarising all files
@@ -233,13 +231,12 @@ run_oscope <- function(input_dir, oscope_config, run_number = NULL) {
   cat(sprintf("Current working directory: %s\n", getwd()))
   
   if (!dir.exists(input_dir_abs)) {
-    cat(sprintf("Directory does not exist: %s\n", input_dir_abs))
-    quit(status = 1)
+    stop("Directory does not exist: ", input_dir_abs)
   }
-  
+
   cat(sprintf("Directory contents: %s\n",
               paste(list.files(input_dir_abs), collapse = ", ")))
-  
+
   data_files <- list.files(
     input_dir_abs,
     pattern = "\\.h5$",
@@ -247,11 +244,10 @@ run_oscope <- function(input_dir, oscope_config, run_number = NULL) {
     ignore.case = TRUE
   )
   data_files <- data_files[!grepl("_sim\\.h5$", data_files, ignore.case = TRUE)]
-  
+
   cat(sprintf("Found %d H5 files to process\n", length(data_files)))
   if (length(data_files) == 0) {
-    cat("No H5 files found.\n")
-    quit(status = 1)
+    stop("No H5 files found in: ", input_dir_abs)
   }
   
   # Print run_number info if provided

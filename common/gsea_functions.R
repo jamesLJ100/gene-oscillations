@@ -10,6 +10,54 @@ library(dorothea)
 library(TFEA.ChIP)
 library(ExperimentHub)
 
+#' Build and save an NES ranking bar plot from a GSEA results data frame
+#'
+#' @param df GSEA results data frame with NES/p.adjust columns, sorted by desc(NES) (as
+#'   returned by as.data.frame() on a gseaResult, or run_dorothea_gsea()'s return value)
+#' @param figures_dir Directory to save the plot
+#' @param fname File name prefix for saved figures
+#' @param file_suffix Suffix appended after fname for the output filename
+#' @param x_label Category axis label (e.g. "Pathway", "Transcription Factor")
+#' @param label_col Column in df to use as the bar category (default "ID")
+#' @param strip_hallmark_prefix Logical, strip "HALLMARK_" from labels for readability
+#' @param top_n Cap on number of bars, keeping the top-N by NES (df is already
+#'   desc(NES)-sorted). Defaults to 20 to match every dotplot() call's showCategory = 20,
+#'   so the dot/bar plot pair for a given task always covers the same top-N; NULL keeps
+#'   every row
+#' @return The plot object (invisibly)
+plot_nes_barplot <- function(df, figures_dir, fname, file_suffix, x_label = "Pathway",
+                              label_col = "ID", strip_hallmark_prefix = FALSE, top_n = 20) {
+
+  plot_df <- if (!is.null(top_n)) head(df, top_n) else df
+  plot_df$.label <- plot_df[[label_col]]
+  if (strip_hallmark_prefix) plot_df$.label <- gsub("HALLMARK_", "", plot_df$.label)
+
+  p_nes <- ggplot(plot_df, aes(x = reorder(.label, NES), y = NES, fill = p.adjust)) +
+    geom_bar(stat = "identity") +
+    scale_fill_viridis_c(name = "Adj. p-value") +
+    coord_flip() +
+    labs(
+      x = x_label,
+      y = "Normalised Enrichment Score"
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x  = element_text(size = 14),
+      axis.text.y  = element_text(size = 14),
+      axis.title   = element_text(size = 16),
+      legend.text  = element_text(size = 12),
+      legend.title = element_text(size = 14)
+    )
+
+  plot_height <- max(6, 2 + nrow(plot_df) * 0.25)
+  plot_width  <- max(8, 3 + max(nchar(as.character(plot_df$.label))) * 0.15) + 2
+
+  ggsave(file.path(figures_dir, paste0(fname, "_", file_suffix, ".pdf")),
+         plot = p_nes, width = plot_width, height = plot_height, dpi = 300)
+
+  invisible(p_nes)
+}
+
 #' Run Hallmark GSEA
 #'
 #' @param geneList Named numeric vector of gene scores (names = ENTREZ IDs)
@@ -36,24 +84,21 @@ run_hallmark_gsea <- function(geneList, species, figures_dir, fname, algorithm) 
                         eps           = 1e-10,
                         scoreType     = "pos")
   
-  gsea_results_df <- as.data.frame(gsea_hallmark) %>% arrange(desc(NES))
+  gsea_results_df <- as.data.frame(gsea_hallmark) %>%
+    filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
   cat("Significant hallmark terms found:", nrow(gsea_results_df), "\n")
   
   if (nrow(gsea_results_df) > 0) {
     print(gsea_results_df[, c("ID", "enrichmentScore", "NES", "pvalue", "p.adjust")])
     
     # Dotplot
-    p_dot <- dotplot(gsea_hallmark, showCategory = 20,
-                     title = paste("Hallmark GSEA -", algorithm, fname))
+    p_dot <- dotplot(gsea_hallmark, showCategory = 20)
     ggsave(file.path(figures_dir, paste0(fname, "_hallmark_gsea_dotplot.pdf")),
            plot = p_dot, width = 10, height = 10, dpi = 300)
-    
-    # GSEA plot for top pathway
-    p_gsea <- gseaplot2(gsea_hallmark, geneSetID = gsea_results_df$ID[1],
-                        pvalue_table = TRUE, color = '#08007E', base_size = 20,
-                        title = paste("GSEA -", gsea_results_df$ID[1], "-", fname))
-    ggsave(file.path(figures_dir, paste0(fname, "_hallmark_gsea_top.pdf")),
-           plot = p_gsea, width = 10, height = 8, dpi = 300)
+
+    # NES bar plot
+    plot_nes_barplot(gsea_results_df, figures_dir, fname, "hallmark_NES_barplot",
+                      x_label = "Pathway", strip_hallmark_prefix = TRUE)
   } else {
     cat("No significant pathways found for", fname, "\n")
   }
@@ -61,21 +106,17 @@ run_hallmark_gsea <- function(geneList, species, figures_dir, fname, algorithm) 
   return(gsea_results_df)
 }
 
-#' Run Gene Ontology GSEA
+#' Run Gene Ontology GSEA (Biological Process)
 #'
 #' @param geneList Named numeric vector of gene scores (names = ENTREZ IDs)
 #' @param org_db OrgDb object (e.g., org.Hs.eg.db or org.Mm.eg.db)
 #' @param figures_dir Directory to save output figures
 #' @param fname File name prefix for saved figures
-#' @return List of GSEA results for BP, MF, and CC
+#' @return GO Biological Process GSEA results data frame
 run_go_gsea <- function(geneList, org_db, figures_dir, fname) {
-  
-  cat("\n=== Running Gene Ontology GSEA ===\n")
-  
-  results_list <- list()
-  
-  # Biological Process
-  cat("Running GO Biological Process...\n")
+
+  cat("\n=== Running Gene Ontology GSEA (Biological Process) ===\n")
+
   gsea_go_bp <- gseGO(geneList,
                       OrgDb         = org_db,
                       ont           = "BP",
@@ -85,80 +126,23 @@ run_go_gsea <- function(geneList, org_db, figures_dir, fname) {
                       verbose       = TRUE,
                       eps           = 1e-10,
                       scoreType     = "pos")
-  
-  go_bp_df <- as.data.frame(gsea_go_bp) %>% arrange(desc(NES))
+
+  go_bp_df <- as.data.frame(gsea_go_bp) %>%
+    filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
   cat("Significant GO BP terms found:", nrow(go_bp_df), "\n")
-  
+
   if (nrow(go_bp_df) > 0) {
     print(head(go_bp_df[, c("Description", "NES", "pvalue", "p.adjust")], 10))
-    
-    p_dot_go_bp <- dotplot(gsea_go_bp, showCategory = 20,
-                           title = paste("GO Biological Process GSEA -", fname))
+
+    p_dot_go_bp <- dotplot(gsea_go_bp, showCategory = 20)
     ggsave(file.path(figures_dir, paste0(fname, "_go_bp_dotplot.pdf")),
            plot = p_dot_go_bp, width = 12, height = 10, dpi = 300)
-    
-    p_gsea_go_bp <- gseaplot2(gsea_go_bp, geneSetID = go_bp_df$ID[1],
-                              pvalue_table = TRUE, color = '#08007E', base_size = 20,
-                              title = paste("GO BP -", go_bp_df$Description[1]))
-    ggsave(file.path(figures_dir, paste0(fname, "_go_bp_top_gsea.pdf")),
-           plot = p_gsea_go_bp, width = 10, height = 8, dpi = 300)
+
+    plot_nes_barplot(go_bp_df, figures_dir, fname, "go_bp_NES_barplot",
+                      x_label = "Biological Process", label_col = "Description")
   }
-  
-  results_list$BP <- go_bp_df
-  
-  # Molecular Function
-  cat("Running GO Molecular Function...\n")
-  gsea_go_mf <- gseGO(geneList,
-                      OrgDb         = org_db,
-                      ont           = "MF",
-                      keyType       = "ENTREZID",
-                      pvalueCutoff  = 0.05,
-                      pAdjustMethod = "BH",
-                      verbose       = TRUE,
-                      eps           = 1e-10,
-                      scoreType     = "pos")
-  
-  go_mf_df <- as.data.frame(gsea_go_mf) %>% arrange(desc(NES))
-  cat("Significant GO MF terms found:", nrow(go_mf_df), "\n")
-  
-  if (nrow(go_mf_df) > 0) {
-    print(head(go_mf_df[, c("Description", "NES", "pvalue", "p.adjust")], 10))
-    
-    p_dot_go_mf <- dotplot(gsea_go_mf, showCategory = 20,
-                           title = paste("GO Molecular Function GSEA -", fname))
-    ggsave(file.path(figures_dir, paste0(fname, "_go_mf_dotplot.pdf")),
-           plot = p_dot_go_mf, width = 12, height = 10, dpi = 300)
-  }
-  
-  results_list$MF <- go_mf_df
-  
-  # Cellular Component
-  cat("Running GO Cellular Component...\n")
-  gsea_go_cc <- gseGO(geneList,
-                      OrgDb         = org_db,
-                      ont           = "CC",
-                      keyType       = "ENTREZID",
-                      pvalueCutoff  = 0.05,
-                      pAdjustMethod = "BH",
-                      verbose       = TRUE,
-                      eps           = 1e-10,
-                      scoreType     = "pos")
-  
-  go_cc_df <- as.data.frame(gsea_go_cc) %>% arrange(desc(NES))
-  cat("Significant GO CC terms found:", nrow(go_cc_df), "\n")
-  
-  if (nrow(go_cc_df) > 0) {
-    print(head(go_cc_df[, c("Description", "NES", "pvalue", "p.adjust")], 10))
-    
-    p_dot_go_cc <- dotplot(gsea_go_cc, showCategory = 20,
-                           title = paste("GO Cellular Component GSEA -", fname))
-    ggsave(file.path(figures_dir, paste0(fname, "_go_cc_dotplot.pdf")),
-           plot = p_dot_go_cc, width = 12, height = 10, dpi = 300)
-  }
-  
-  results_list$CC <- go_cc_df
-  
-  return(results_list)
+
+  go_bp_df
 }
 
 #' Run DoRothEA GSEA
@@ -206,7 +190,8 @@ run_dorothea_gsea <- function(geneList, species, org_db, figures_dir, fname) {
                         eps           = 1e-10,
                         scoreType     = "pos")
   
-  dorothea_df <- as.data.frame(gsea_dorothea) %>% arrange(desc(NES))
+  dorothea_df <- as.data.frame(gsea_dorothea) %>%
+    filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
   cat("Significant DoRothEA TFs found:", nrow(dorothea_df), "\n")
   
   if (nrow(dorothea_df) > 0) {
@@ -223,35 +208,10 @@ run_dorothea_gsea <- function(geneList, species, org_db, figures_dir, fname) {
       )
     ggsave(file.path(figures_dir, paste0(fname, "_dorothea_dotplot.pdf")),
            plot = p_dot_doro, width = 10, height = 8, dpi = 300)
-    
-    # Top TF GSEA plot
-    p_gsea_d <- gseaplot2(gsea_dorothea, geneSetID = dorothea_df$ID[1],
-                          pvalue_table = TRUE, color = '#7E0008', base_size = 20,
-                          title = paste("DoRothEA GSEA -", dorothea_df$ID[1], "-", fname))
-    ggsave(file.path(figures_dir, paste0(fname, "_dorothea_top_gsea.pdf")),
-           plot = p_gsea_d, width = 10, height = 8, dpi = 300)
-    
-    # NES barplot
-    p_nes <- ggplot(dorothea_df, aes(x = reorder(ID, NES), y = NES, fill = p.adjust)) +
-      geom_bar(stat = "identity") +
-      scale_fill_gradient(low = "#08007E", high = "#a8b4e8", name = "Adj. p-value") +
-      coord_flip() +
-      labs(
-        title = paste("DoRothEA TF Activity -", fname),
-        x     = "Transcription Factor",
-        y     = "Normalised Enrichment Score"
-      ) +
-      theme_classic() +
-      theme(
-        axis.text.x  = element_text(size = 14),
-        axis.text.y  = element_text(size = 14),
-        axis.title   = element_text(size = 16),
-        plot.title   = element_text(size = 18, face = "bold"),
-        legend.text  = element_text(size = 12),
-        legend.title = element_text(size = 14)
-      )
-    ggsave(file.path(figures_dir, paste0(fname, "_dorothea_NES_barplot.pdf")),
-           plot = p_nes, width = 8, height = 6, dpi = 300)
+
+    # NES bar plot
+    plot_nes_barplot(dorothea_df, figures_dir, fname, "dorothea_NES_barplot",
+                      x_label = "Transcription Factor")
   } else {
     cat("No significant DoRothEA TFs found for", fname, "\n")
   }
@@ -299,7 +259,6 @@ run_tfea_chip <- function(geneList, figures_dir, fname,
   }
   
   cat(sprintf("Running TFEA.ChIP analysis (mode = '%s', method = gsea)...\n", mode))
-  cat("This may take a few minutes...\n")
   
   tfea_result <- TFEA.ChIP::analysis_from_table(
     input_df,
@@ -308,11 +267,6 @@ run_tfea_chip <- function(geneList, figures_dir, fname,
     expressed = expressed,
     method    = "gsea"
   )
-  
-  # --- debug extraction ---
-  cat("\n--- Debugging result structure ---\n")
-  cat("Names at top level:", paste(names(tfea_result), collapse = ", "), "\n")
-  cat("Names under $result:", paste(names(tfea_result$result), collapse = ", "), "\n")
   
   enrich_tbl <- tfea_result$result$Enrichment.table
   cat("Class of Enrichment.table:", class(enrich_tbl), "\n")
@@ -347,39 +301,69 @@ run_tfea_chip <- function(geneList, figures_dir, fname,
     nperm <- 1000
     
     sig_df           <- tfea_df[tfea_df$Significant & !is.na(tfea_df$Significant), ]
-    plot_df          <- head(sig_df, 30)
+    plot_df          <- head(sig_df, 20)
     plot_df$log10FDR <- -log10(plot_df$FDR + 1/nperm)
-    
+    plot_df$TF_label <- paste0(plot_df$TF, " (", plot_df$Cell, ")")
+    still_dup <- duplicated(plot_df$TF_label) | duplicated(plot_df$TF_label, fromLast = TRUE)
+    accession_code <- sub("\\..*$", "", plot_df$Accession[still_dup])
+    plot_df$TF_label[still_dup] <- paste0(
+      plot_df$TF[still_dup], " (", plot_df$Cell[still_dup], ", ", accession_code, ")"
+    )
+
     print(head(sig_df, 20))
-    
-    # Bar plot of top significant TFs
-    p_bar <- ggplot(plot_df, aes(x = reorder(TF, log10FDR), y = log10FDR, fill = log10FDR)) +
+
+    plot_height <- max(6, 2 + nrow(plot_df) * 0.25)
+    plot_width  <- max(8, 3 + max(nchar(plot_df$TF_label)) * 0.15) + 2
+
+    # Bar plot of top significant TFs. Bar height = ES (the effect-size statistic,
+    # playing the role NES plays in the other bar plots), fill = -log10(FDR)
+    p_bar <- ggplot(plot_df, aes(x = reorder(TF_label, ES), y = ES, fill = log10FDR)) +
       geom_bar(stat = "identity") +
-      scale_fill_gradient(low = "#a8b4e8", high = "#08007E", name = "-log10(FDR)") +
+      scale_fill_viridis_c(name = "-log10(FDR)", direction = -1) +
       coord_flip() +
       labs(
-        title = paste("TFEA.ChIP - Top TFs -", fname),
-        x     = "Transcription Factor",
-        y     = paste0("-log(p + ", 1/nperm, ")")
+        x = "Transcription Factor (Cell)",
+        y = "Enrichment Score"
       ) +
       theme_classic() +
       theme(
         axis.text.x  = element_text(size = 14),
         axis.text.y  = element_text(size = 14),
         axis.title   = element_text(size = 16),
-        plot.title   = element_text(size = 18, face = "bold"),
         legend.text  = element_text(size = 12),
         legend.title = element_text(size = 14)
       )
     ggsave(file.path(figures_dir, paste0(fname, "_tfea_chip_barplot.pdf")),
-           plot = p_bar, width = 8, height = 6, dpi = 300)
-    
+           plot = p_bar, width = plot_width, height = plot_height, dpi = 300)
+
+    # Dot plot of top significant TFs - mirrors the dotplot() views the other GSEA
+    # functions produce (x = effect-size statistic, colour = significance), using ES
+    # (TFEA.ChIP's effect-size statistic, playing the role GeneRatio/NES play elsewhere)
+    # since TFEA.ChIP results have no GeneRatio/setSize/Count equivalent to plot.
+    p_dot_tfea <- ggplot(plot_df, aes(x = ES, y = reorder(TF_label, ES), colour = log10FDR)) +
+      geom_point(size = 3) +
+      scale_colour_viridis_c(name = "-log10(FDR)", direction = -1) +
+      labs(
+        x = "Enrichment Score",
+        y = "Transcription Factor (Cell)"
+      ) +
+      theme_classic() +
+      theme(
+        axis.text.x  = element_text(size = 14),
+        axis.text.y  = element_text(size = 14),
+        axis.title   = element_text(size = 16),
+        legend.text  = element_text(size = 12),
+        legend.title = element_text(size = 14)
+      )
+    ggsave(file.path(figures_dir, paste0(fname, "_tfea_chip_dotplot.pdf")),
+           plot = p_dot_tfea, width = plot_width, height = plot_height, dpi = 300)
+
     # Volcano plot
     # Add pseudocount of 1/nperm before log transformation to avoid -log10(0) = Inf
     tfea_df$log10FDR <- -log10(tfea_df$FDR + 1/nperm)
     sig_df$log10FDR  <- -log10(sig_df$FDR  + 1/nperm)
     
-    # Dynamic y-axis: pad 15% above highest value (all finite now due to pseudocount)
+    # Dynamic y-axis: pad 15% above highest value
     y_upper <- max(tfea_df$log10FDR, na.rm = TRUE) * 1.15
     
     p_scatter <- ggplot(tfea_df, aes(x = ES, y = log10FDR, colour = Significant)) +
@@ -393,7 +377,7 @@ run_tfea_chip <- function(geneList, figures_dir, fname,
         colour       = "#08007E",
         box.padding  = 0.4,
         max.overlaps = 20,
-        ylim         = c(NA, Inf)   # allow labels to extend upward freely
+        ylim         = c(NA, Inf)
       ) +
       geom_hline(yintercept = -log10(0.05), linetype = "dashed", colour = "grey40") +
       scale_y_continuous(
@@ -401,16 +385,13 @@ run_tfea_chip <- function(geneList, figures_dir, fname,
         expand = expansion(mult = c(0.02, 0.05))
       ) +
       labs(
-        title = paste("TFEA.ChIP Volcano -", fname),
-        x     = "Enrichment Score",
-        y     = paste0("-log(p + ", 1/nperm, ")")
+        x = "Enrichment Score",
+        y = paste0("-log10(FDR + ", 1/nperm, ")")
       ) +
       theme_classic() +
       theme(
         axis.text    = element_text(size = 14),
         axis.title   = element_text(size = 16),
-        plot.title   = element_text(size = 18, face = "bold",
-                                    margin = margin(b = 10)),
         legend.text  = element_text(size = 12),
         legend.title = element_text(size = 14),
         plot.margin  = margin(t = 20, r = 10, b = 10, l = 10)
@@ -428,8 +409,7 @@ run_tfea_chip <- function(geneList, figures_dir, fname,
 #' Build a ranked, Entrez-ID-keyed gene score vector for GSEA
 #'
 #' Converts gene symbols to Entrez IDs (dropping unmapped genes) and returns a
-#' score vector sorted descending - the input format run_hallmark_gsea(),
-#' run_go_gsea(), run_dorothea_gsea(), and run_tfea_chip() all expect.
+#' score vector sorted descending.
 #'
 #' @param results_df Data frame with a gene symbol column and a score column
 #' @param org_db OrgDb object (e.g., org.Hs.eg.db or org.Mm.eg.db)
@@ -458,12 +438,6 @@ build_ranked_gene_list <- function(results_df, org_db, symbol_col = "symbol", sc
 }
 
 #' Resolve a "human"/"mouse" species string to its OrgDb annotation object
-#'
-#' Shared by run_pathway_analyses() and any caller that needs an OrgDb for
-#' build_ranked_gene_list() before it has a geneList to hand to
-#' run_pathway_analyses() (e.g. when analysing several clusters/conditions of
-#' the same species in a loop).
-#'
 #' @param species Character, "human" or "mouse"
 #' @return An OrgDb object (org.Hs.eg.db or org.Mm.eg.db)
 resolve_org_db <- function(species) {
@@ -479,22 +453,17 @@ resolve_org_db <- function(species) {
 
 #' Run the full pathway/TF-activity analysis suite (Hallmark, GO, DoRothEA, TFEA.ChIP)
 #'
-#' Thin wrapper around run_hallmark_gsea() / run_go_gsea() / run_dorothea_gsea() /
-#' run_tfea_chip() that resolves the species-specific msigdbr name, OrgDb, and
-#' DoRothEA/TFEA.ChIP species string from a single `species` argument, so callers
-#' don't have to keep three different per-function species-string conventions in
-#' sync themselves.
-#'
 #' @param geneList Named numeric vector of gene scores (names = ENTREZ IDs), as
 #'   returned by build_ranked_gene_list()
 #' @param species Character, "human" or "mouse"
 #' @param figures_dir Directory to save output figures (created if missing)
 #' @param fname File name prefix for saved figures
 #' @param algorithm Algorithm name for plot titles (e.g. "cyclum", "scPrisma")
-#' @param run_go Logical, whether to run the (slower) GO BP/MF/CC GSEA (default TRUE)
+#' @param run_go Logical, whether to run the (slower) GO Biological Process GSEA (default TRUE)
 #' @param run_tfea Logical, whether to run TFEA.ChIP (default TRUE)
 #' @param tf_filter Optional character vector of TF names to test in TFEA.ChIP (NULL = all)
-#' @return Named list with elements hallmark, go, dorothea, tfea (go/tfea are NULL if skipped)
+#' @return Named list with elements hallmark, go, dorothea, tfea - each a results data
+#'   frame (go/tfea are NULL if skipped)
 run_pathway_analyses <- function(geneList, species, figures_dir, fname, algorithm,
                                   run_go = TRUE, run_tfea = TRUE, tf_filter = NULL) {
 
@@ -560,6 +529,11 @@ plot_hallmark_heatmap <- function(hallmark_by_group, figures_dir, algorithm) {
     pull(ID) %>%
     unique()
 
+  if (length(sig_pathways) == 0) {
+    cat("No significant hallmark pathways found across any cluster.\n")
+    return(invisible(NULL))
+  }
+
   heatmap_df <- hallmark_combined %>%
     filter(ID %in% sig_pathways) %>%
     mutate(
@@ -582,15 +556,13 @@ plot_hallmark_heatmap <- function(hallmark_by_group, figures_dir, algorithm) {
       name     = "NES"
     ) +
     labs(
-      title = paste(algorithm, "- Hallmark GSEA across clusters"),
-      x     = "",
-      y     = ""
+      x = "",
+      y = ""
     ) +
     theme_bw(base_size = 18) +
     theme(
       axis.text.x  = element_text(size = 16, angle = 45, hjust = 1),
       axis.text.y  = element_text(size = 14),
-      plot.title   = element_text(size = 22, face = "bold"),
       legend.title = element_text(size = 18),
       legend.text  = element_text(size = 16),
       panel.grid   = element_blank()
@@ -605,4 +577,81 @@ plot_hallmark_heatmap <- function(hallmark_by_group, figures_dir, algorithm) {
   cat("Hallmark heatmap saved.\n")
 
   invisible(heatmap_df)
+}
+
+#' Scatter plot comparing Hallmark GSEA enrichment scores between two conditions
+#'
+#' One point per Hallmark pathway, NES in condition A vs NES in condition B - answers
+#' "did the same pathways shift between these two conditions, and in the same direction?"
+#' Points near the y=x diagonal are enriched similarly in both; points far from it are
+#' specific to one condition. Since run_hallmark_gsea()'s result table only contains
+#' pathways GSEA() found significant *for that condition* (pvalueCutoff = 0.05), a
+#' pathway missing from one side's table is plotted at NES = 0 there - i.e. "not
+#' significantly enriched in that condition", not "true NES was zero".
+#'
+#' @param hallmark_a,hallmark_b Hallmark GSEA result data frames (as returned by
+#'   run_hallmark_gsea()/run_pathway_analyses()$hallmark), one per condition being
+#'   compared. Either may be NULL/empty if that condition had no significant pathways.
+#' @param label_a,label_b Condition names, used as axis labels, plot title, and filename
+#' @param figures_dir Directory to save the plot
+#' @param algorithm Algorithm name, used in the title and output filename
+#' @return The merged comparison data frame (invisibly), or NULL if neither condition
+#'   had any significant pathways
+plot_hallmark_comparison <- function(hallmark_a, hallmark_b, label_a, label_b,
+                                      figures_dir, algorithm) {
+
+  cat(sprintf("\n=== Creating Hallmark comparison plot: %s vs %s ===\n", label_a, label_b))
+
+  empty <- data.frame(ID = character(0), NES = numeric(0), p.adjust = numeric(0))
+  a <- if (!is.null(hallmark_a) && nrow(hallmark_a) > 0) hallmark_a else empty
+  b <- if (!is.null(hallmark_b) && nrow(hallmark_b) > 0) hallmark_b else empty
+
+  if (nrow(a) == 0 && nrow(b) == 0) {
+    cat("No significant hallmark pathways for either", label_a, "or", label_b,
+        "- skipping comparison plot.\n")
+    return(invisible(NULL))
+  }
+
+  comparison_df <- dplyr::full_join(
+    dplyr::select(a, ID, NES_a = NES, padj_a = p.adjust),
+    dplyr::select(b, ID, NES_b = NES, padj_b = p.adjust),
+    by = "ID"
+  ) %>%
+    mutate(
+      NES_a       = ifelse(is.na(NES_a), 0, NES_a),
+      NES_b       = ifelse(is.na(NES_b), 0, NES_b),
+      significant = (!is.na(padj_a) & padj_a < 0.05) | (!is.na(padj_b) & padj_b < 0.05),
+      ID          = gsub("HALLMARK_", "", ID)
+    )
+
+  axis_lim <- max(abs(c(comparison_df$NES_a, comparison_df$NES_b)), na.rm = TRUE) * 1.15
+
+  p <- ggplot(comparison_df, aes(x = NES_a, y = NES_b)) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey60") +
+    geom_hline(yintercept = 0, colour = "grey85") +
+    geom_vline(xintercept = 0, colour = "grey85") +
+    geom_point(aes(colour = significant), size = 2.5, alpha = 0.8) +
+    ggrepel::geom_text_repel(
+      data         = dplyr::filter(comparison_df, significant),
+      aes(label = ID),
+      size         = 3,
+      max.overlaps = 20
+    ) +
+    scale_colour_manual(values = c("FALSE" = "grey70", "TRUE" = "#08007E"), guide = "none") +
+    coord_equal(xlim = c(-axis_lim, axis_lim), ylim = c(-axis_lim, axis_lim)) +
+    labs(
+      x = paste(label_a, "NES"),
+      y = paste(label_b, "NES")
+    ) +
+    theme_bw(base_size = 14)
+
+  out_file <- file.path(
+    figures_dir,
+    sprintf("hallmark_comparison_%s_vs_%s.pdf",
+            gsub("[^A-Za-z0-9]+", "_", label_a), gsub("[^A-Za-z0-9]+", "_", label_b))
+  )
+  ggsave(out_file, plot = p, width = 8, height = 7, dpi = 300)
+  cat("Hallmark comparison plot saved to:", out_file, "\n")
+
+  invisible(comparison_df)
 }

@@ -95,6 +95,7 @@ reference_lists <- list(
 load_scores <- function(algorithm, counts_files, file_prefix, cyclum_dir, scPrisma_dir) {
   results <- list()
   cluster_pattern <- paste0("^", file_prefix, "(.+)_counts$")
+  results_dir <- if (algorithm == "cyclum") cyclum_dir else scPrisma_dir
 
   for (expr_file in counts_files) {
     file_name <- tools::file_path_sans_ext(basename(expr_file))
@@ -102,22 +103,10 @@ load_scores <- function(algorithm, counts_files, file_prefix, cyclum_dir, scPris
 
     cat("Processing:", cluster, "with", algorithm, "\n")
 
-    if (algorithm == "cyclum") {
-      weight_file <- file.path(cyclum_dir, paste0(file_name, ".h5"))
-      if (!file.exists(weight_file)) {
-        cat("  no cyclum weights for:", cluster, "-", weight_file, "\n")
-        next
-      }
-      scores <- get_cyclum_scores(expr_file, weight_file)
-    } else if (algorithm == "scPrisma") {
-      results_file <- file.path(scPrisma_dir, paste0(file_name, ".csv"))
-      if (!file.exists(results_file)) {
-        cat("  no scPrisma results for:", cluster, "-", results_file, "\n")
-        next
-      }
-      scores <- read.csv(results_file)
-    } else {
-      stop("Unknown algorithm: ", algorithm)
+    scores <- load_model_scores(algorithm, results_dir, expr_file, file_name)
+    if (is.null(scores)) {
+      cat("  no", algorithm, "results for:", cluster, "-", results_dir, "\n")
+      next
     }
 
     scores$cluster <- cluster
@@ -130,6 +119,34 @@ load_scores <- function(algorithm, counts_files, file_prefix, cyclum_dir, scPris
   # get_cyclum_scores returns "symbol" column — rename to gene
   if ("symbol" %in% colnames(df)) df <- rename(df, gene = symbol)
   df
+}
+
+# ============================================================================
+# Compute mean raw-count expression per gene, per cluster, from the same counts
+# .h5 files load_scores() reads. Needed independently of load_scores() because
+# scPrisma's own score loading just reads scPrisma's output CSV, not the input
+# counts matrix, so the counts data isn't otherwise available for the
+# score-vs-expression plots below.
+# ============================================================================
+compute_mean_expression <- function(counts_files, file_prefix) {
+  results <- list()
+  cluster_pattern <- paste0("^", file_prefix, "(.+)_counts$")
+
+  for (expr_file in counts_files) {
+    file_name <- tools::file_path_sans_ext(basename(expr_file))
+    cluster   <- gsub(cluster_pattern, "\\1", file_name)
+
+    counts_mat <- hdf2mat(expr_file)  # genes x cells
+
+    results[[cluster]] <- data.frame(
+      gene      = rownames(counts_mat),
+      mean_expr = rowMeans(counts_mat),
+      cluster   = cluster,
+      row.names = NULL
+    )
+  }
+
+  bind_rows(results)
 }
 
 # ============================================================================
@@ -325,13 +342,12 @@ run_evaluation <- function(algorithm, config, refs) {
   ))
 
   score_label <- paste(display, "Cycling Score")
-  title_suffix <- paste0(config$label, ", ", display)
 
   # --- Plot 1: all genes, all clusters ---
   p1 <- ggplot(df, aes(x = cluster, y = score, fill = cluster)) +
     geom_violin(trim = FALSE, alpha = 0.7, color = "white") +
     geom_boxplot(width = 0.1, outlier.shape = NA, fill = NA) +
-    labs(title = paste0("All genes (", title_suffix, ")"), x = "", y = score_label) +
+    labs(x = "", y = score_label) +
     theme_common(14)
 
   # --- Plot 2: oscillating genes only, ref_cluster as reference ---
@@ -361,8 +377,7 @@ run_evaluation <- function(algorithm, config, refs) {
         { if (nrow(osc_stats) > 0) stat_pvalue_manual(osc_stats, label = "p.signif", size = 5) } +
         ylim(0, 1) +
         scale_fill_manual(values = osc_fill) +
-        labs(title = paste0("Oscillating genes only (", title_suffix, ")"),
-             x = "", y = score_label) +
+        labs(x = "", y = score_label) +
         theme_common(14)
     }
   }
@@ -395,8 +410,7 @@ run_evaluation <- function(algorithm, config, refs) {
         "Cell Cycle"   = "skyblue",
         "Other"        = "skyblue"
       )) +
-      labs(title = paste0(ref_cluster, " cells — score by gene category (", title_suffix, ")"),
-           x = "", y = score_label) +
+      labs(x = "", y = score_label) +
       theme_common(14)
   }
 
@@ -431,8 +445,7 @@ run_evaluation <- function(algorithm, config, refs) {
         direction     = "both",
         max.overlaps  = Inf
       ) +
-      labs(title = paste0(ref_cluster, " gene percentile distribution (", title_suffix, ")"),
-           x = "Percentile", y = score_label) +
+      labs(x = "Percentile", y = score_label) +
       theme_common(14)
   }
 
@@ -454,6 +467,26 @@ run_evaluation <- function(algorithm, config, refs) {
 
   # --- Pathway/TF-activity analysis, run separately per cluster ---
   run_pathway_analysis_per_cluster(df, config, algorithm)
+
+  # --- Score vs mean expression, one plot per cluster -------------------------
+  # Sanity check that the cycling score isn't just tracking expression level,
+  # with reference oscillating genes highlighted to see if they stand out.
+  expr_df       <- compute_mean_expression(counts_files, config$file_prefix)
+  expr_figures_dir <- file.path(config$figures_dir, algorithm)
+
+  score_expr_df <- df %>%
+    dplyr::inner_join(expr_df, by = c("gene", "cluster")) %>%
+    mutate(is_oscillating = dynamic == "Oscillating")
+
+  for (cluster_name in levels(droplevels(score_expr_df$cluster))) {
+    plot_score_vs_expression(
+      cluster_df   = score_expr_df[score_expr_df$cluster == cluster_name, ],
+      cluster_name = cluster_name,
+      algorithm    = algorithm,
+      score_label  = score_label,
+      figures_dir  = expr_figures_dir
+    )
+  }
 
   invisible(list(df = df, p1 = p1, p2 = p2, p3 = p3, p4 = p4))
 }

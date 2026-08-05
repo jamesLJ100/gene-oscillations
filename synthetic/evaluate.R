@@ -12,136 +12,144 @@ source(file.path(proj_root, "synthetic/dyngen_utils.R"))
 source(file.path(proj_root, "common/utils.R"))
 
 
-algorithms  <- c("scPrisma", "cyclum", "oscope")
-dyngen_dir  <- file.path(proj_root, "synthetic/data/dyngen_new")
-cyclum_dir  <- file.path(proj_root, "synthetic/data/dyngen_new/cyclum")
-scPrisma_dir <- file.path(proj_root, "synthetic/data/dyngen_new/scPrisma")
-oscope_dir <- file.path(proj_root, "synthetic/data/dyngen_new/oscope")
-expr_files  <- list.files(dyngen_dir, pattern = "\\.h5$", full.names = TRUE)
-results     <- list()
+algorithms <- c("scPrisma", "cyclum", "oscope")
+dyngen_dir <- file.path(proj_root, "synthetic/data/dyngen_new")
+
+# Each (n_cells, n_genes) combination has its own subdirectory (see
+# generate_datasets.R) rather than one flat directory - "gridsearch" is excluded
+# automatically since it doesn't match the c<n_cells>g<n_genes> naming pattern.
+combos  <- list_combo_dirs(dyngen_dir)
+results <- list()
+
+if (nrow(combos) == 0) {
+  stop("No evaluation-set combinations found under ", dyngen_dir,
+       " - run generate_datasets.R first.")
+}
 
 # Each algorithm writes a runtimes.csv (columns: file, runtime_seconds, ...) into
-# its own output dir. Combine them into a single `runtimes` table tagged with the
-# algorithm, averaging over any repeated runs (run_number) of the same file.
-runtime_dirs <- c(scPrisma = scPrisma_dir, cyclum = cyclum_dir, oscope = oscope_dir)
-runtimes <- do.call(rbind, lapply(names(runtime_dirs), function(algorithm) {
-  rt_path <- file.path(runtime_dirs[[algorithm]], "runtimes.csv")
-  if (!file.exists(rt_path)) {
-    cat("No runtimes.csv for", algorithm, "at", rt_path, "\n")
-    return(NULL)
-  }
-  rt <- read.csv(rt_path, stringsAsFactors = FALSE)
-  rt <- rt[!is.na(rt$runtime_seconds), c("file", "runtime_seconds")]
-  if (nrow(rt) == 0) return(NULL)
-  # Average across repeated runs so each (file, algorithm) has one runtime
-  rt <- aggregate(runtime_seconds ~ file, data = rt, FUN = mean)
-  rt$algorithm <- algorithm
-  rt
+# its own per-combination output dir (dyngen_new/c<n_cells>g<n_genes>/<algorithm>/).
+# Combine them all into a single `runtimes` table tagged with the algorithm,
+# averaging over any repeated runs (run_number) of the same file.
+runtimes <- do.call(rbind, lapply(seq_len(nrow(combos)), function(i) {
+  do.call(rbind, lapply(algorithms, function(algorithm) {
+    rt_path <- file.path(combos$path[i], algorithm, "runtimes.csv")
+    if (!file.exists(rt_path)) return(NULL)
+    rt <- read.csv(rt_path, stringsAsFactors = FALSE)
+    rt <- rt[!is.na(rt$runtime_seconds), c("file", "runtime_seconds")]
+    if (nrow(rt) == 0) return(NULL)
+    # Average across repeated runs so each (file, algorithm) has one runtime
+    rt <- aggregate(runtime_seconds ~ file, data = rt, FUN = mean)
+    rt$algorithm <- algorithm
+    rt
+  }))
 }))
 
-for (expr_file in expr_files) {
-  fname <- tools::file_path_sans_ext(basename(expr_file))
-  
-  # Load simulation file once per expr_file
-  sim_file <- file.path(dyngen_dir, paste0(fname, "_sim.rds"))
-  if (!file.exists(sim_file)) {
-    cat("Skipping", fname, "- no corresponding sim RDS found\n")
-    next
-  }
-  sim <- readRDS(sim_file)
-  
-  gene_module_assignments <- propagate_module_assignments(sim, context = fname)
-  
-  # Only evaluate on genes at most one hop from a TF (hops <= 1); this also
-  # drops cycle genes with NA hops, since NA <= 1 is NA (filtered out).
-  cycling_genes <- gene_module_assignments %>%
-    filter(module %in% c("B", "C", "D"), hops <= 1) %>%
-    pull(gene)
+for (combo_i in seq_len(nrow(combos))) {
+  combo_dir <- combos$path[combo_i]
+  n_cells   <- combos$n_cells[combo_i]
+  n_genes   <- combos$n_genes[combo_i]
 
-  gene_symbols <- rownames(sim$counts)
+  expr_files <- list.files(combo_dir, pattern = "\\.h5$", full.names = TRUE)
 
-  eval_genes   <- gene_module_assignments %>% filter(hops <= 1) %>% pull(gene)
-  eval_symbols <- gene_symbols[gene_symbols %in% eval_genes]
+  for (expr_file in expr_files) {
+    fname <- tools::file_path_sans_ext(basename(expr_file))
 
-  label_df <- data.frame(symbol = eval_symbols, label = 0L)
-  label_df$label[eval_symbols %in% cycling_genes] <- 1L
-  
-  # Parse metadata once
-  parsed <- regmatches(fname, regexpr("c(\\d+)g(\\d+)", fname))
-  n_cells <- as.integer(sub("c(\\d+)g.*",  "\\1", parsed))
-  n_genes <- as.integer(sub(".*g(\\d+).*", "\\1", parsed))
-  
-  # Now process each algorithm for this file
-  for (algorithm in algorithms) {
-    cat("Processing:", fname, "with", algorithm, "\n")
-    
-    algorithm_results_df <- tryCatch(
-      get_model_scores(algorithm, dyngen_dir, fname),
-      error = function(e) { cat("Error with", fname, algorithm, "-", conditionMessage(e), "\n"); NULL }
-    )
-    if (is.null(algorithm_results_df)) {
-      cat("Skipping", fname, algorithm, "- no results file found\n")
+    # Load simulation file once per expr_file
+    sim_file <- file.path(combo_dir, paste0(fname, "_sim.rds"))
+    if (!file.exists(sim_file)) {
+      cat("Skipping", fname, "- no corresponding sim RDS found\n")
       next
     }
-    
-    merge_df <- merge(label_df, algorithm_results_df, by = "symbol", all.x = TRUE)
-    # If algorithm filtered out a gene, treat it like a non-osc prediction
-    merge_df$score[is.na(merge_df$score)] <- 0
-    
-    pred_obj  <- prediction(merge_df$score, merge_df$label)
-    auc_val   <- performance(pred_obj, "auc")@y.values[[1]]
+    sim <- readRDS(sim_file)
 
-    # AUPRC via PRROC (a proper precision-recall curve integration, not a naive
-    # trapezoidal estimate over ROCR's cutoffs, which is biased under class imbalance).
-    auprc_val <- tryCatch({
-      pr <- pr.curve(
-        scores.class0 = merge_df$score[merge_df$label == 1],
-        scores.class1 = merge_df$score[merge_df$label == 0],
-        curve = FALSE
+    gene_module_assignments <- propagate_module_assignments(sim, context = fname)
+
+    # Only evaluate on genes at most one hop from a TF (hops <= 1); this also
+    # drops cycle genes with NA hops, since NA <= 1 is NA (filtered out).
+    cycling_genes <- gene_module_assignments %>%
+      filter(module %in% c("B", "C", "D"), hops <= 1) %>%
+      pull(gene)
+
+    gene_symbols <- rownames(sim$counts)
+
+    eval_genes   <- gene_module_assignments %>% filter(hops <= 1) %>% pull(gene)
+    eval_symbols <- gene_symbols[gene_symbols %in% eval_genes]
+
+    label_df <- data.frame(symbol = eval_symbols, label = 0L)
+    label_df$label[eval_symbols %in% cycling_genes] <- 1L
+
+    # Now process each algorithm for this file
+    for (algorithm in algorithms) {
+      cat("Processing:", fname, "with", algorithm, "\n")
+
+      algorithm_results_df <- tryCatch(
+        get_model_scores(algorithm, combo_dir, fname),
+        error = function(e) { cat("Error with", fname, algorithm, "-", conditionMessage(e), "\n"); NULL }
       )
-      pr$auc.integral
-    }, error = function(e) NA_real_)
+      if (is.null(algorithm_results_df)) {
+        cat("Skipping", fname, algorithm, "- no results file found\n")
+        next
+      }
 
-    # Threshold-dependent metrics (accuracy, F1, precision, recall) need a cutoff.
-    # Algorithms produce scores on very different scales, so a fixed cutoff (e.g. 0.5)
-    # wouldn't be comparable across them - instead use each (algorithm, file)'s own
-    # F1-maximising cutoff, a standard choice for reporting a single operating point.
-    f1_perf   <- performance(pred_obj, "f")
-    acc_perf  <- performance(pred_obj, "acc")
-    prec_perf <- performance(pred_obj, "prec")
-    rec_perf  <- performance(pred_obj, "rec")
+      merge_df <- merge(label_df, algorithm_results_df, by = "symbol", all.x = TRUE)
+      # If algorithm filtered out a gene, treat it like a non-osc prediction
+      merge_df$score[is.na(merge_df$score)] <- 0
 
-    f1_vals  <- f1_perf@y.values[[1]]
-    best_idx <- which.max(f1_vals)
+      pred_obj  <- prediction(merge_df$score, merge_df$label)
+      auc_val   <- performance(pred_obj, "auc")@y.values[[1]]
 
-    f1_val   <- if (length(best_idx) > 0) f1_vals[best_idx]                    else NA_real_
-    acc_val  <- if (length(best_idx) > 0) acc_perf@y.values[[1]][best_idx]     else NA_real_
-    prec_val <- if (length(best_idx) > 0) prec_perf@y.values[[1]][best_idx]    else NA_real_
-    rec_val  <- if (length(best_idx) > 0) rec_perf@y.values[[1]][best_idx]     else NA_real_
+      # AUPRC via PRROC (a proper precision-recall curve integration, not a naive
+      # trapezoidal estimate over ROCR's cutoffs, which is biased under class imbalance).
+      auprc_val <- tryCatch({
+        pr <- pr.curve(
+          scores.class0 = merge_df$score[merge_df$label == 1],
+          scores.class1 = merge_df$score[merge_df$label == 0],
+          curve = FALSE
+        )
+        pr$auc.integral
+      }, error = function(e) NA_real_)
 
-    runtime <- if (exists("runtimes")) {
-      rt <- runtimes$runtime_seconds[runtimes$file == fname & runtimes$algorithm == algorithm]
-      if (length(rt) == 1) rt else NA_real_
-    } else NA_real_
+      # Threshold-dependent metrics (accuracy, F1, precision, recall) need a cutoff.
+      # Algorithms produce scores on very different scales, so a fixed cutoff (e.g. 0.5)
+      # wouldn't be comparable across them - instead use each (algorithm, file)'s own
+      # F1-maximising cutoff, a standard choice for reporting a single operating point.
+      f1_perf   <- performance(pred_obj, "f")
+      acc_perf  <- performance(pred_obj, "acc")
+      prec_perf <- performance(pred_obj, "prec")
+      rec_perf  <- performance(pred_obj, "rec")
 
-    result_key <- paste(algorithm, fname, sep = "__")
-    results[[result_key]] <- list(
-      algorithm  = algorithm,
-      file       = fname,
-      cells      = n_cells,
-      genes      = n_genes,
-      eval_genes = nrow(merge_df),
-      auc        = auc_val,
-      auprc      = auprc_val,
-      accuracy   = acc_val,
-      f1         = f1_val,
-      precision  = prec_val,
-      recall     = rec_val,
-      runtime    = runtime
-    )
-    cat("AUC for", algorithm, fname, ":", auc_val,
-        "| AUPRC:", auprc_val, "| F1:", f1_val,
-        "| Acc:", acc_val, "| Prec:", prec_val, "| Rec:", rec_val, "\n")
+      f1_vals  <- f1_perf@y.values[[1]]
+      best_idx <- which.max(f1_vals)
+
+      f1_val   <- if (length(best_idx) > 0) f1_vals[best_idx]                    else NA_real_
+      acc_val  <- if (length(best_idx) > 0) acc_perf@y.values[[1]][best_idx]     else NA_real_
+      prec_val <- if (length(best_idx) > 0) prec_perf@y.values[[1]][best_idx]    else NA_real_
+      rec_val  <- if (length(best_idx) > 0) rec_perf@y.values[[1]][best_idx]     else NA_real_
+
+      runtime <- if (exists("runtimes")) {
+        rt <- runtimes$runtime_seconds[runtimes$file == fname & runtimes$algorithm == algorithm]
+        if (length(rt) == 1) rt else NA_real_
+      } else NA_real_
+
+      result_key <- paste(algorithm, fname, sep = "__")
+      results[[result_key]] <- list(
+        algorithm  = algorithm,
+        file       = fname,
+        cells      = n_cells,
+        genes      = n_genes,
+        eval_genes = nrow(merge_df),
+        auc        = auc_val,
+        auprc      = auprc_val,
+        accuracy   = acc_val,
+        f1         = f1_val,
+        precision  = prec_val,
+        recall     = rec_val,
+        runtime    = runtime
+      )
+      cat("AUC for", algorithm, fname, ":", auc_val,
+          "| AUPRC:", auprc_val, "| F1:", f1_val,
+          "| Acc:", acc_val, "| Prec:", prec_val, "| Rec:", rec_val, "\n")
+    }
   }
 }
 

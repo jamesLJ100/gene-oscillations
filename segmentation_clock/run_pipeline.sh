@@ -11,14 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-run_step () {
-  echo
-  echo "========================================================================"
-  echo "STEP: $1"
-  echo "========================================================================"
-  Rscript "$SCRIPT_DIR/$1"
-}
+source "$SCRIPT_DIR/../common/run_step.sh"
 
 run_step "preprocess_mme95.R"
 run_step "preprocess_mesc.R"

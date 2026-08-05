@@ -7,8 +7,18 @@ generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE)
 
   model_config <- make_config(n_cells, n_genes)
 
-  # Determine subdirectory based on is_tuning flag
-  subdir <- if (is_tuning) file.path("synthetic", "data", "dyngen_new", "gridsearch") else file.path("synthetic", "data", "dyngen_new")
+  # Each (n_cells, n_genes) combination gets its own subdirectory, for both the
+  # tuning and evaluation sets. This isn't just organisational: run_cyclum.py/
+  # run_scPrisma.py each glob every .h5 file in whatever directory they're pointed
+  # at and apply one fixed hyperparameter setting to all of them in a single call -
+  # so combinations that need different (tuned) hyperparameters must be physically
+  # isolated in their own directory, not just distinguishable by filename.
+  combo_dir <- sprintf("c%dg%d", n_cells, n_genes)
+  subdir <- if (is_tuning) {
+    file.path("synthetic", "data", "dyngen_new", "gridsearch", combo_dir)
+  } else {
+    file.path("synthetic", "data", "dyngen_new", combo_dir)
+  }
   dir.create(here::here(subdir), showWarnings = FALSE, recursive = TRUE)
   error_log <- here::here(subdir, "generation_errors.log")
 
@@ -47,14 +57,26 @@ generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE)
   }
 }
 
+# Two 1D sweeps sharing a common anchor (c1000g200): one varies genes with cells
+# held fixed, the other varies cells with genes held fixed.
+combos <- rbind(
+  data.frame(n_cells = 1000, n_genes = c(50, 200, 500, 2000, 5000)),
+  data.frame(n_cells = c(50, 100, 250, 500, 2500, 5000), n_genes = 200)
+)
+
+# For each (n_cells, n_genes) combination, generate two independent 5-replicate
+# sets: a tuning set (for grid search - see cyclum_gs.R/scPrisma_gs.R/oscope_gs.R,
+# which find the best hyperparameters per combination using only these) and a
+# held-out evaluation set (scored in evaluate.R using those best hyperparameters,
+# so the reported performance isn't inflated by evaluating on the same data the
+# hyperparameters were chosen on).
 generate_data <- function() {
-  for (i in c(50, 200, 500, 2000, 5000)) {
-    generate_datasets(n_cells = 1000, n_genes = i, n_replicates = 5, is_tuning = FALSE)
+  for (i in seq_len(nrow(combos))) {
+    generate_datasets(n_cells = combos$n_cells[i], n_genes = combos$n_genes[i],
+                       n_replicates = 5, is_tuning = FALSE)
+    generate_datasets(n_cells = combos$n_cells[i], n_genes = combos$n_genes[i],
+                       n_replicates = 5, is_tuning = TRUE)
   }
-  for (i in c(50, 100, 250, 500, 2500, 5000)) {
-    generate_datasets(n_cells = i, n_genes = 200, n_replicates = 5, is_tuning = FALSE)
-  }
-  #generate_datasets(n_cells = 5000, n_genes = 200, n_replicates = 5, is_tuning = FALSE)
 }
 generate_data()
 

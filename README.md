@@ -26,12 +26,19 @@ RNA-seq data, using [Cyclum](https://github.com/KChen-lab/Cyclum) and
     in-process rather than shelling out to a separate script.
 - `common/` — shared R helpers sourced by all of the above:
   - `hdfrw.R` — `.h5` read/write (`mat2hdf()`/`hdf2mat()`).
-  - `utils.R` — model-score loading (`get_cyclum_scores()`, `get_model_scores()`).
+  - `utils.R` — cell QC (`qc_cell_mask()`), model-score loading (`get_cyclum_scores()`,
+    `get_model_scores()`).
   - `gsea_functions.R` — Hallmark/GO/DoRothEA/TFEA.ChIP pathway analysis
     (`run_pathway_analyses()` and friends), used by every `analyse.R`.
-  - `plotting_utils.R` — shared `theme_common()` for the score-comparison violin/boxplots.
-  - `grid_search.R` — algorithm-agnostic `run_grid_search()` hyperparameter-sweep driver,
-    used by `synthetic/cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R`.
+  - `plotting_utils.R` — shared `theme_common()` plus score-comparison scatter plots
+    (`plot_score_comparison()`, `plot_score_vs_expression()`).
+  - `grid_search.R` — algorithm-agnostic hyperparameter-sweep drivers: `run_grid_search()`
+    (one parameter grid) and `tune_per_combo()` (the same grid searched separately per
+    (n_cells, n_genes) combination), used by `synthetic/cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R`.
+  - `download_geo.R` — shared GEOquery bootstrap + skip-if-present download
+    (`download_geo_supp_if_missing()`), used by every dataset's `download*.R`.
+  - `run_step.sh` — shared `run_step()` bash helper (runs a pipeline step as its own
+    `Rscript` process), sourced by every dataset's `run_pipeline.sh`.
 
 ## Environment setup
 
@@ -52,7 +59,33 @@ install.packages(c("reticulate", "here", "data.table", "Matrix"))
 install.packages("BiocManager")
 BiocManager::install("rhdf5")
 install.packages("hdf5r")
+install.packages("testthat")
 ```
+
+### GSEA / pathway-analysis packages (for analyse.R)
+
+Every dataset's `analyse.R` (and the `common/gsea_functions.R`/`common/plotting_utils.R` it
+sources) needs a further set of Bioconductor and CRAN packages, on top of the ones above - these
+aren't required for preprocessing or running the algorithms themselves, only for the
+Hallmark/GO/DoRothEA/TFEA.ChIP pathway analysis step:
+
+```r
+install.packages("BiocManager")
+BiocManager::install(c(
+  "clusterProfiler", "enrichplot", "BiocParallel", "dorothea", "TFEA.ChIP",
+  "GenomicRanges", "ExperimentHub",
+  "org.Hs.eg.db",                      # human - myc, segmentation_clock (hIPSC)
+  "org.Mm.eg.db",                      # mouse - nfkb, segmentation_clock (mme95/mESC)
+  "TxDb.Hsapiens.UCSC.hg19.knownGene"  # myc only
+))
+install.packages(c(
+  "dplyr", "readr", "msigdbr", "ggplot2", "ggpubr", "ggrepel", "tidyr", "patchwork"
+))
+```
+
+`org.Hs.eg.db`/`org.Mm.eg.db` and `TxDb.Hsapiens.UCSC.hg19.knownGene` are large annotation
+downloads, so this will take a while - only install the species-specific ones you actually need
+if you want to skip the rest (e.g. `org.Hs.eg.db` alone covers `myc/analyse.R`).
 
 ### Python / conda environments
 
@@ -147,14 +180,62 @@ print('OK')
 "
 ```
 
+## Running tests
+
+```r
+source("tests/testthat.R")
+```
+
+or from the shell:
+
+```bash
+Rscript tests/testthat.R
+```
+
+Tests live in `tests/testthat/`, one file per module under test (`test-hdfrw.R`,
+`test-utils.R`, `test-grid_search.R`, `test-plotting_utils.R`, `test-gsea_functions.R`,
+`test-dyngen_utils.R`, `test-algorithms.R`, `test-run_oscope.R`), plus `test-syntax.R`, which
+parses every `.R` file in the repo and catches syntax errors even in scripts that aren't
+otherwise unit-testable (see below).
+
+**What's covered**: the reusable function libraries in `common/`, `synthetic/dyngen_utils.R`,
+and `algorithms/run_cyclum.R`/`run_scPrisma.R`/`run_oscope.R` - argument-building, data
+wrangling, file I/O, control flow, and error handling, all exercised with small in-memory
+fixtures and mocked external calls (no conda envs, no network, no real training runs).
+
+**What isn't covered, and why**: the per-dataset orchestration scripts (`preprocess.R`/
+`preprocess_*.R`, `run_cyclum.R`/`run_scPrisma.R` in `myc/`/`nfkb`/`segmentation_clock`/`synthetic`,
+every `analyse.R`) aren't unit-tested directly - their logic isn't factored into standalone
+functions, and most of them `library()` heavy Bioconductor packages
+(clusterProfiler/msigdbr/dorothea/TFEA.ChIP/Oscope/...) or drive real conda environments via
+`reticulate`, neither of which is guaranteed to be available in every environment this suite
+runs in. `test-syntax.R` still catches syntax regressions in all of them. Tests that need a
+package not installed in the current environment (e.g. `org.Hs.eg.db`/`org.Mm.eg.db`) skip
+cleanly with `skip_if_not_installed()` rather than failing, and will run for real in an
+environment with the full package set installed (see "Python / conda environments" above and
+the Bioconductor packages listed throughout this README).
+
+Several test files rely on two non-obvious techniques to test code that would otherwise require
+those unavailable packages - both are documented in `tests/testthat/helper-setup.R` and at the
+point of use:
+- Temporarily stubbing `library()` to a no-op so a file can be `source()`d (and its *logic*
+  tested with mocked replacements for the specific functions actually exercised) without its
+  own `library(clusterProfiler)`-style calls erroring.
+- Explicitly targeting `.GlobalEnv` when stubbing/mocking a function, rather than just
+  reassigning it inside a `test_that()` block - `source()` always evaluates the sourced code in
+  `.GlobalEnv` regardless of where it's called from, and `testthat::test_file()` doesn't carry
+  attached-package or global-binding state from a test file's own top-level code into its
+  individual `test_that()` blocks, so a plain local reassignment often isn't visible to the code
+  under test.
+
 ## Synthetic data generation (optional)
 
 `synthetic/generate_datasets.R` produces the synthetic benchmark datasets (via
-[dyngen](https://github.com/dynverse/dyngen)) used by `synthetic/evaluate.R` and
-`synthetic/evaluate_gs.R` (plus the grid-search scripts `synthetic/cyclum_gs.R` and
-`synthetic/scPrisma_gs.R`). **This is optional** — the exact datasets used in this project will
-also be uploaded to Zenodo (link TBD) for direct download, so you only need this section if you
-want to generate new/different synthetic data yourself rather than using the pre-generated ones.
+[dyngen](https://github.com/dynverse/dyngen)) used by `synthetic/evaluate.R` and the grid-search
+scripts (`synthetic/cyclum_gs.R`, `synthetic/scPrisma_gs.R`, `synthetic/oscope_gs.R`).
+**This is optional** — the exact datasets used in this project will also be uploaded to Zenodo
+(link TBD) for direct download, so you only need this section if you want to generate
+new/different synthetic data yourself rather than using the pre-generated ones.
 
 ### Install dyngen and its dependencies
 
@@ -188,23 +269,56 @@ you want to swap these out for a different simulation grounding.
 source("synthetic/generate_datasets.R")
 ```
 
+For each of the 11 (n_cells, n_genes) combinations in the two cells/genes sweeps, this produces
+**two independent 5-replicate sets**, each in its own `c<n_cells>g<n_genes>` subdirectory:
+
+- **Tuning set** — `synthetic/data/dyngen_new/gridsearch/c<n_cells>g<n_genes>/`
+- **Evaluation set** — `synthetic/data/dyngen_new/c<n_cells>g<n_genes>/`
+
+The split exists so hyperparameters are never chosen and scored on the same data: the tuning set
+is what `cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R` search over, and the evaluation set is what
+`evaluate.R` reports performance on. Each combination gets its own subdirectory (rather than one
+flat directory) because `algorithms/run_cyclum.py`/`run_scPrisma.py` apply one fixed
+hyperparameter setting to every `.h5` file in whatever directory they're pointed at — different
+combinations need different (tuned) hyperparameters, so they have to be physically separated.
+
 Errors during generation (e.g. a simulation failing for a particular cells/genes/replicate
-combination) are caught, logged to `generation_errors.log` (written alongside the datasets, in
-`synthetic/data/dyngen_new/` or `synthetic/data/dyngen_new/gridsearch/`) with the failing
-dataset's identifying parameters and the error message, and the script continues on to the next
-replicate rather than halting entirely.
+combination) are caught, logged to a `generation_errors.log` in the relevant combination's
+subdirectory, and the script continues on to the next replicate rather than halting entirely.
+
+### Hyperparameter tuning (optional but recommended)
+
+```r
+source("synthetic/cyclum_gs.R")
+source("synthetic/scPrisma_gs.R")
+source("synthetic/oscope_gs.R")
+```
+
+Each script searches its algorithm's hyperparameter grid **separately for every (n_cells,
+n_genes) combination**, scoring each setting by mean AUC against dyngen's ground-truth cycling
+labels averaged across that combination's 5 tuning replicates. The winning hyperparameters per
+combination are saved to `synthetic/data/dyngen_new/gridsearch/best_hyperparams_<algorithm>.csv`.
+
+If this has been run, `synthetic/run_cyclum.R`/`run_scPrisma.R`/`run_oscope.R` (below) pick up
+each combination's own best hyperparameters automatically when run afterwards; otherwise they
+fall back to fixed defaults. This step is substantially more compute than the rest of the
+pipeline (the full hyperparameter grid × 11 combinations × 5 tuning replicates each), so it's
+not included in `run_pipeline.sh` by default.
 
 ### Evaluating results
 
 ```r
-source("synthetic/evaluate.R")     # AUROC/AUPRC/accuracy/F1/precision/recall vs. cells/genes sweeps
-source("synthetic/evaluate_gs.R")  # grid-search hyperparameter comparison
+source("synthetic/evaluate.R")  # AUROC/AUPRC/accuracy/F1/precision/recall vs. cells/genes sweeps
 ```
+
+Scores the **evaluation set** (never the tuning set the grid search used) with whichever
+hyperparameters `run_cyclum.R`/`run_scPrisma.R`/`run_oscope.R` were run with.
 
 Figures are written to `synthetic/figures/`.
 
 Or run generation, Cyclum, scPrisma, Oscope, and evaluation in one go with
-`./synthetic/run_pipeline.sh`.
+`./synthetic/run_pipeline.sh` (hyperparameter tuning isn't included — see the script's own
+comments for how to layer it in first).
 
 ## Running the segmentation clock pipeline
 
@@ -237,13 +351,13 @@ Or run every step above (plus evaluation) in one go with `./segmentation_clock/r
 
 ## Running the MYC oscillations (HCT116) pipeline
 
-`preprocess_hct116.R` auto-downloads the raw GEO data (accession `GSM4286760`, via
+`preprocess.R` auto-downloads the raw GEO data (accession `GSM4286760`, via
 `GEOquery::getGEOSuppFiles()`) the first time it's run, if it isn't already present under
 `myc/data/GSM4286760/` — no separate download step needed.
 
 ```r
 # 1. Build the raw UMI count .h5 file from the raw GEO data (auto-downloaded if missing)
-source("myc/preprocess_hct116.R")
+source("myc/preprocess.R")
 
 # 2. Run each algorithm (each activates its own conda env via reticulate)
 source("myc/run_cyclum.R")
