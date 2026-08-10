@@ -9,23 +9,17 @@
 # that entirely, since each one starts with no leftover Python state.
 #
 # Not included here - run manually first if you want it:
-#   - cyclum_gs.R / scPrisma_gs.R / oscope_gs.R: hyperparameter grid search, tuned
+#   - gridsearch/cyclum_gs.R / scPrisma_gs.R / oscope_gs.R: hyperparameter grid search, tuned
 #     separately per (n_cells, n_genes) combination against the tuning-set replicates
-#     generate_datasets.R produces (dyngen_new/gridsearch/c<n_cells>g<n_genes>/).
+#     generate_datasets.R produces (dyngen/gridsearch/c<n_cells>g<n_genes>/).
 #     Optional but recommended - if run BEFORE run_cyclum.R/run_scPrisma.R/
 #     run_oscope.R below, each combination's own best hyperparameters are picked up
-#     automatically (from dyngen_new/gridsearch/best_hyperparams_<algorithm>.csv);
+#     automatically (from dyngen/gridsearch/best_hyperparams_<algorithm>.csv);
 #     otherwise those steps fall back to fixed defaults. Not wired into this script
 #     by default since the full grid search is substantially more compute than the
 #     rest of the pipeline combined.
 #
-# Also not included:
-#   - evaluate_gs.R: now superseded by tune_per_combo() (called from within
-#     cyclum_gs.R/scPrisma_gs.R/oscope_gs.R), which computes AUC and picks the best
-#     hyperparameters per combination automatically as part of the grid search
-#     itself - evaluate_gs.R's separate load-and-rescan-the-log approach predates
-#     that and no longer matches the per-combination directory layout.
-#   - plotting.R / plot_c1000g2007_1.R: one-off exploratory plots.
+# Also not included: plotting.R / plot_c1000g2007_1.R (one-off exploratory plots).
 
 set -euo pipefail
 

@@ -82,6 +82,13 @@ def get_cyclic_gene_scores(adata, regularisation_strength=0.1, iternum=100):
 
 
 def process_file(input_path, output_dir, args):
+    fname = os.path.splitext(os.path.basename(input_path))[0]
+    output_path = os.path.join(output_dir, f'{fname}.csv')
+
+    if args.skip_if_exists and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        print(f'Skipping {fname}: output already exists at {output_path}')
+        return {"file": fname, "runtime_seconds": float("nan")}
+
     print(f'Processing file: {input_path}')
 
     # Step 1: load and preprocess
@@ -101,17 +108,11 @@ def process_file(input_path, output_dir, args):
 
     elapsed = time.time() - start_time
 
-    fname = os.path.splitext(os.path.basename(input_path))[0]
-
-    # Add run number to filename if specified
-    if args.run_number is not None:
-        output_filename = f'{fname}_r{args.run_number}.csv'
-    else:
-        output_filename = f'{fname}.csv'
-
-    output_path = os.path.join(output_dir, output_filename)
-
-    scores_df.to_csv(output_path, index=False)
+    # Write to a temp path, then rename (atomic on POSIX) into place - avoids a
+    # truncated file at output_path if the process is killed mid-write.
+    tmp_path = output_path + ".tmp"
+    scores_df.to_csv(tmp_path, index=False)
+    os.replace(tmp_path, output_path)
     print(f'Saved cyclic scores to: {output_path}')
     print(f'Runtime: {elapsed:.2f}s')
 
@@ -125,7 +126,7 @@ def main():
         epilog="""
 Examples:
   python script.py input_dir --iternum 200 --regularisation_strength 0.2
-  python script.py input_dir --n_top_genes 3000 --run_number 1
+  python script.py input_dir --n_top_genes 3000
         """
     )
     
@@ -140,9 +141,11 @@ Examples:
                         help='Regularisation strength for cyclic gene filtering (default: 0.1)')
     parser.add_argument('--n_top_genes', type=int, default=5000,
                         help='Number of highly variable genes to select (default: 5000)')
-    parser.add_argument('--run_number', type=int, default=None,
-                        help='Run number to append to output filenames')
-    
+    parser.add_argument('--skip_if_exists', action='store_true',
+                        help='Skip files whose output already exists (for resuming an '
+                             'interrupted run) - do not use for grid search, which must '
+                             'always recompute')
+
     args = parser.parse_args()
 
     # Echo the arguments this script was called with
@@ -174,9 +177,7 @@ Examples:
     print(f"  - iternum: {args.iternum}")
     print(f"  - regularisation_strength: {args.regularisation_strength}")
     print(f"  - n_top_genes: {args.n_top_genes}")
-    if args.run_number is not None:
-        print(f"  - run_number: {args.run_number}")
-    
+
     if not data_files:
         print("No H5 files found.")
         sys.exit(1)

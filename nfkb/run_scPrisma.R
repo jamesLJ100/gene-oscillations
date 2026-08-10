@@ -11,6 +11,6 @@ use_condaenv("scPrisma_env", required = TRUE)
 run_scPrisma(
   input_dir                = file.path(proj_root, "nfkb/data/GSE162992/processed"),
   output_dir               = file.path(proj_root, "nfkb/results/scPrisma"),
-  regularisation_strength  = 0.2,
+  regularisation_strength  = 0.1,
   iternum                  = 100
 )

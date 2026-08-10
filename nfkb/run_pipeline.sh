@@ -1,7 +1,5 @@
 #!/bin/bash
-# Runs the full nfkb (GSE162992 NF-kB oscillations) pipeline end-to-end: preprocessing
-# (auto-downloading and unpacking the raw GEO data if missing), then Cyclum and
-# scPrisma, then evaluation.
+# Runs the nfkb (GSE162992) pipeline end-to-end.
 #
 # Each step runs as its own `Rscript` process rather than being sourced inside one
 # long-lived R session. This matters specifically for Cyclum/scPrisma: reticulate
@@ -14,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../common/run_step.sh"
 
-run_step "preprocess_nfkb.R"
+run_step "preprocess.R"
 run_step "run_cyclum.R"
 run_step "run_scPrisma.R"
 run_step "analyse.R"

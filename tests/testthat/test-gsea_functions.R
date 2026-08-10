@@ -130,14 +130,14 @@ test_that("run_pathway_analyses dispatches the right species string to each sub-
   calls <- new.env()
   mocks <- list(
     resolve_org_db    = function(species) paste0("orgdb_", species),
-    run_hallmark_gsea = function(geneList, species, figures_dir, fname, algorithm) {
-      calls$hallmark <- species; "hallmark_result"
+    run_hallmark_gsea = function(geneList, species, figures_dir, fname, algorithm, hallmark = NULL) {
+      calls$hallmark <- species; calls$hallmark_arg <- hallmark; "hallmark_result"
     },
     run_go_gsea = function(geneList, org_db, figures_dir, fname) {
       calls$go <- org_db; "go_result"
     },
-    run_dorothea_gsea = function(geneList, species, org_db, figures_dir, fname) {
-      calls$dorothea <- species; "dorothea_result"
+    run_dorothea_gsea = function(geneList, species, org_db, figures_dir, fname, dorothea_term2gene = NULL) {
+      calls$dorothea <- species; calls$dorothea_arg <- dorothea_term2gene; "dorothea_result"
     },
     run_tfea_chip = function(geneList, figures_dir, fname, species, tf_filter) {
       calls$tfea <- species; "tfea_result"
@@ -167,4 +167,15 @@ test_that("run_pathway_analyses dispatches the right species string to each sub-
   expect_equal(calls$hallmark, "Mus musculus")
   expect_null(res2$go)
   expect_null(res2$tfea)
+  expect_null(calls$hallmark_arg)
+  expect_null(calls$dorothea_arg)
+
+  # Pre-built tables should be forwarded through untouched, not rebuilt.
+  fake_hallmark <- data.frame(gs_name = "SET1", entrez_gene = "1")
+  fake_dorothea <- data.frame(Geneset = "TF1", ENTREZID = "1")
+  run_pathway_analyses(c(A = 1), species = "human", figures_dir = tempfile(),
+                        fname = "f3", algorithm = "cyclum",
+                        hallmark = fake_hallmark, dorothea_term2gene = fake_dorothea)
+  expect_identical(calls$hallmark_arg, fake_hallmark)
+  expect_identical(calls$dorothea_arg, fake_dorothea)
 })

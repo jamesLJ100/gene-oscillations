@@ -1,6 +1,5 @@
 #!/bin/bash
-# Runs the full segmentation_clock pipeline end-to-end: preprocessing for all three
-# datasets, then Cyclum and scPrisma, then evaluation.
+# Runs the segmentation_clock pipeline end-to-end.
 #
 # Each step runs as its own `Rscript` process rather than being sourced inside one
 # long-lived R session. This matters specifically for Cyclum/scPrisma: reticulate

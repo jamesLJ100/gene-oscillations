@@ -38,12 +38,9 @@ backbone_cycle_simple <- function() {
   module_info <- tribble(
     ~module_id, ~basal, ~burn, ~independence,
     "A", 1, TRUE, 1,
-    # "X", 1, TRUE, 1,
     "B", 0, TRUE, 1,
     "C", 0, TRUE, 1,
     "D", 0, TRUE, 1
-    # "Y", 0, FALSE, 1,
-    # "Z", 1, TRUE, 1
   )
   
   module_network <- tribble(
@@ -52,16 +49,10 @@ backbone_cycle_simple <- function() {
     "B", "C", 1L, 1, 2,
     "C", "D", 1L, 1, 2,
     "D", "B", -1L, 100, 2
-    # "X", "Y", 1L, 10, 2,
-    # "Y", "Z", -1L, 10, 2
   )
   
   expression_patterns <- tribble(
     ~from, ~to, ~module_progression, ~start, ~burn, ~time,
-    # "s0", "s1", "+A,+X,+B,+C,+Z", TRUE, TRUE, 100,
-    # "s1", "s2", "+D,-C,+Y", FALSE, FALSE, 100,
-    # "s2", "s3", "+C,-A,-B", FALSE, FALSE, 100,
-    # "s3", "s1", "+A,+B,-D", FALSE, FALSE, 100
     "s0", "s1", "+A,+B,+C", TRUE, TRUE, 100,
     "s1", "s2", "+D,-C", FALSE, FALSE, 100,
     "s2", "s3", "+C,-B", FALSE, FALSE, 100,
@@ -85,7 +76,7 @@ make_config <- function(n_cells, n_genes) {
     max_in_degree      = 1L,
     damping            = 0.01,
     target_resampling  = Inf,
-    num_simulations = 50
+    num_simulations = 32
   )
 }
 
@@ -144,23 +135,3 @@ run_simulation <- function(model_config) {
     counts = counts
   )
 }
-
-model_config <- make_config(200, 200)
-sim          <- run_simulation(model_config)
-
-fname_base <- sprintf("test_%dgenes_%dcells", nrow(sim$counts), ncol(sim$counts))
-
-subdir   <- file.path(proj_root, "synthetic", "data")
-h5_file  <- here::here(subdir, paste0(fname_base, ".h5"))
-sim_file <- here::here(subdir, paste0(fname_base, "_sim.rds"))
-dir.create(dirname(h5_file), showWarnings = FALSE, recursive = TRUE)
-
-mat2hdf(sim$counts, h5_file)
-saveRDS(sim, sim_file)
-
-cat("Saved to:", h5_file, "\n")
-cat("Dimensions:", nrow(sim$counts), "genes ×", ncol(sim$counts), "cells\n")
-cat("Row names (genes):", length(rownames(sim$counts)), "saved\n")
-cat("Column names (cells):", length(colnames(sim$counts)), "saved\n")
-
-plot_simulation_expression(sim$model, 1, what = "mol_mrna")

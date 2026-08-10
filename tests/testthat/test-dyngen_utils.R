@@ -1,4 +1,4 @@
-source(file.path(proj_root, "synthetic/dyngen_utils.R"))
+source(file.path(proj_root, "synthetic/utils/dyngen_utils.R"))
 
 # ============================================================================
 # list_combo_dirs()
@@ -34,17 +34,18 @@ test_that("list_combo_dirs returns a zero-row data frame when there's nothing to
 # get_best_hyperparams()
 # ============================================================================
 
-test_that("get_best_hyperparams falls back to defaults when no grid search CSV exists", {
+test_that("get_best_hyperparams falls back to defaults and warns when no grid search CSV exists", {
   gs_root <- tempfile()
   dir.create(gs_root)
   on.exit(unlink(gs_root, recursive = TRUE))
 
   defaults <- list(encoder_width = c(30, 20), epochs = 500, learning_rate = 2e-4)
-  hp <- get_best_hyperparams("cyclum", gs_root, 1000, 200, defaults)
+  hp <- expect_warning(get_best_hyperparams("cyclum", gs_root, 1000, 200, defaults),
+                        "No grid search results found")
   expect_identical(hp, defaults)
 })
 
-test_that("get_best_hyperparams falls back to defaults when the combination isn't in the CSV", {
+test_that("get_best_hyperparams falls back to defaults and warns when the combination isn't in the CSV", {
   gs_root <- tempfile()
   dir.create(gs_root)
   on.exit(unlink(gs_root, recursive = TRUE))
@@ -54,11 +55,12 @@ test_that("get_best_hyperparams falls back to defaults when the combination isn'
                         epochs = 300, learning_rate = 1e-4),
             file.path(gs_root, "best_hyperparams_cyclum.csv"), row.names = FALSE)
 
-  hp <- get_best_hyperparams("cyclum", gs_root, 1000, 200, defaults)
+  hp <- expect_warning(get_best_hyperparams("cyclum", gs_root, 1000, 200, defaults),
+                        "No grid search result for c1000g200")
   expect_identical(hp, defaults)
 })
 
-test_that("get_best_hyperparams returns the tuned values when the combination is found", {
+test_that("get_best_hyperparams returns the tuned values, with no warning, when the combination is found", {
   gs_root <- tempfile()
   dir.create(gs_root)
   on.exit(unlink(gs_root, recursive = TRUE))
@@ -68,10 +70,28 @@ test_that("get_best_hyperparams returns the tuned values when the combination is
                         epochs = 300, learning_rate = 1e-4),
             file.path(gs_root, "best_hyperparams_cyclum.csv"), row.names = FALSE)
 
-  hp <- get_best_hyperparams("cyclum", gs_root, 50, 200, defaults)
+  hp <- expect_no_warning(get_best_hyperparams("cyclum", gs_root, 50, 200, defaults))
   expect_equal(hp$encoder_width, "40, 30")
   expect_equal(hp$epochs, 300)
   expect_equal(hp$learning_rate, 1e-4)
+})
+
+test_that("get_best_hyperparams falls back to the default and warns for a hyperparameter missing from the CSV, without failing the whole lookup", {
+  gs_root <- tempfile()
+  dir.create(gs_root)
+  on.exit(unlink(gs_root, recursive = TRUE))
+
+  # regularisation_strength was swept and logged; iternum is a fixed value that
+  # wasn't logged as its own column - this is the exact shape that used to crash
+  # get_best_hyperparams() with "undefined columns selected".
+  defaults <- list(regularisation_strength = 0.1, iternum = 100)
+  write.csv(data.frame(n_cells = 50, n_genes = 200, regularisation_strength = 0.3),
+            file.path(gs_root, "best_hyperparams_scPrisma.csv"), row.names = FALSE)
+
+  hp <- expect_warning(get_best_hyperparams("scPrisma", gs_root, 50, 200, defaults),
+                        "using default value.*iternum")
+  expect_equal(hp$regularisation_strength, 0.3)
+  expect_equal(hp$iternum, 100)
 })
 
 # ============================================================================
@@ -179,6 +199,57 @@ test_that("propagate_module_assignments errors if a target gene has in-degree > 
   )
 })
 
+test_that("propagate_module_assignments handles a cyclic TF module network (matches backbone_cycle_simple()'s actual A->B->C->D->B shape)", {
+  library(dplyr)
+
+  # run_dyngen.R's real backbone has a feedback edge D->B, forming a cycle among
+  # the TF modules themselves - unlike every other test here, which uses a plain
+  # linear chain. This function identifies TF genes directly from module-labelled
+  # edges rather than walking the TF graph, so the cycle shouldn't matter, but
+  # that assumption was never actually exercised by a test until now.
+  feature_net <- data.frame(
+    from        = c("A", "B", "C", "D", "B"),
+    to          = c("B", "C", "D", "B", "Target1"),
+    from_module = c("A", "B", "C", "D", NA),
+    to_module   = c("B", "C", "D", "B", NA),
+    stringsAsFactors = FALSE
+  )
+  sim <- list(model = list(feature_network = feature_net))
+  result <- propagate_module_assignments(sim)
+
+  by_gene      <- setNames(result$module, result$gene)
+  hops_by_gene <- setNames(result$hops, result$gene)
+
+  expect_equal(by_gene[["A"]], "A")
+  expect_equal(by_gene[["B"]], "B")
+  expect_equal(by_gene[["C"]], "C")
+  expect_equal(by_gene[["D"]], "D")
+  expect_true(all(hops_by_gene[c("A", "B", "C", "D")] == 0L))
+  expect_equal(by_gene[["Target1"]], "B")
+  expect_equal(hops_by_gene[["Target1"]], 1L)
+})
+
+test_that("propagate_module_assignments produces sane output on a real dyngen simulation file", {
+  library(dplyr)
+
+  sim_path <- here::here("synthetic", "data", "dyngen", "c1000g200", "c1000g204_1_sim.rds")
+  skip_if_not(file.exists(sim_path), "Real simulation fixture not available in this environment")
+
+  sim <- readRDS(sim_path)
+  result <- propagate_module_assignments(sim, context = "real-data-check")
+
+  tf_rows <- result[result$gene %in% c("A_TF1", "B_TF1", "C_TF1", "D_TF1"), ]
+  expect_equal(nrow(tf_rows), 4)
+  expect_true(all(tf_rows$hops == 0))
+  expect_setequal(tf_rows$module, c("A", "B", "C", "D"))
+
+  # target_resampling = Inf / max_in_degree = 1 (see run_dyngen.R's make_config())
+  # should mean every gene in the simulated count matrix is resolvable in practice.
+  gene_symbols <- rownames(sim$counts)
+  expect_true(all(gene_symbols %in% result$gene))
+  expect_true(all(!is.na(result$module[result$gene %in% gene_symbols])))
+})
+
 test_that("score_against_ground_truth returns a high AUC when cycling genes score higher", {
   library(dplyr)
   library(ROCR)
@@ -215,4 +286,59 @@ test_that("score_against_ground_truth returns NA when the sim file is missing or
 
   expect_true(is.na(score_against_ground_truth("nonexistent", sim_dir, data.frame(symbol = "a", score = 1))$auc))
   expect_true(is.na(score_against_ground_truth("c10g5_1", sim_dir, NULL)$auc))
+})
+
+# ============================================================================
+# compute_threshold_metrics()
+# ============================================================================
+
+test_that("compute_threshold_metrics evaluates a binary score at its own decision, not a searched-for best cutoff", {
+  library(ROCR)
+
+  # Reproduces the exact bug found in production: an all-zero (binary) score against
+  # a heavily imbalanced label set. Before the fix, searching for the F1-maximising
+  # cutoff would land on "predict everyone positive" (since scores are tied at 0, one
+  # of the tested cutoffs treats everyone as positive) and report near-perfect
+  # accuracy/precision/recall/F1 despite the algorithm having predicted nothing.
+  scores <- rep(0, 123)
+  labels <- c(rep(1, 122), 0)
+
+  m <- compute_threshold_metrics(scores, labels)
+
+  # Nothing was predicted positive, so recall/precision/F1 are all zero (or NA for
+  # precision, since there are no positive predictions to be precise about) - not the
+  # ~0.99 a "predict everyone positive" cutoff would have produced.
+  expect_equal(m$recall, 0)
+  expect_true(is.na(m$precision))
+  expect_true(is.na(m$f1))
+  expect_equal(m$accuracy, 1 / 123)
+})
+
+test_that("compute_threshold_metrics evaluates a binary score correctly when it does predict some positives", {
+  scores <- c(1, 1, 0, 0, 0)
+  labels <- c(1, 0, 1, 0, 0)
+
+  m <- compute_threshold_metrics(scores, labels)
+
+  expect_equal(m$accuracy, 3 / 5)
+  expect_equal(m$precision, 1 / 2)
+  expect_equal(m$recall, 1 / 2)
+  expect_equal(m$f1, 1 / 2)
+  expect_equal(m$predicted, c(1, 1, 0, 0, 0))
+})
+
+test_that("compute_threshold_metrics searches for the best cutoff when scores are continuous", {
+  library(ROCR)
+
+  scores <- c(0.9, 0.8, 0.3, 0.2, 0.1)
+  labels <- c(1, 1, 0, 0, 0)
+
+  m <- compute_threshold_metrics(scores, labels)
+
+  # A cutoff between 0.8 and 0.3 perfectly separates the classes.
+  expect_equal(m$accuracy, 1)
+  expect_equal(m$precision, 1)
+  expect_equal(m$recall, 1)
+  expect_equal(m$f1, 1)
+  expect_equal(m$predicted, c(1, 1, 0, 0, 0))
 })

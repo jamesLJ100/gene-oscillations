@@ -34,7 +34,7 @@ RNA-seq data, using [Cyclum](https://github.com/KChen-lab/Cyclum) and
     (`plot_score_comparison()`, `plot_score_vs_expression()`).
   - `grid_search.R` — algorithm-agnostic hyperparameter-sweep drivers: `run_grid_search()`
     (one parameter grid) and `tune_per_combo()` (the same grid searched separately per
-    (n_cells, n_genes) combination), used by `synthetic/cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R`.
+    (n_cells, n_genes) combination), used by `synthetic/gridsearch/cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R`.
   - `download_geo.R` — shared GEOquery bootstrap + skip-if-present download
     (`download_geo_supp_if_missing()`), used by every dataset's `download*.R`.
   - `run_step.sh` — shared `run_step()` bash helper (runs a pipeline step as its own
@@ -62,6 +62,15 @@ install.packages("hdf5r")
 install.packages("testthat")
 ```
 
+### Seurat (for nfkb preprocessing)
+
+`nfkb/preprocess.R` uses Seurat for QC filtering and HTO demultiplexing - not needed for
+myc/segmentation_clock's preprocessing, which read raw count matrices directly.
+
+```r
+install.packages("Seurat")
+```
+
 ### GSEA / pathway-analysis packages (for analyse.R)
 
 Every dataset's `analyse.R` (and the `common/gsea_functions.R`/`common/plotting_utils.R` it
@@ -79,7 +88,7 @@ BiocManager::install(c(
   "TxDb.Hsapiens.UCSC.hg19.knownGene"  # myc only
 ))
 install.packages(c(
-  "dplyr", "readr", "msigdbr", "ggplot2", "ggpubr", "ggrepel", "tidyr", "patchwork"
+  "dplyr", "readr", "msigdbr", "ggplot2", "ggpubr", "ggrepel", "patchwork"
 ))
 ```
 
@@ -198,7 +207,7 @@ Tests live in `tests/testthat/`, one file per module under test (`test-hdfrw.R`,
 parses every `.R` file in the repo and catches syntax errors even in scripts that aren't
 otherwise unit-testable (see below).
 
-**What's covered**: the reusable function libraries in `common/`, `synthetic/dyngen_utils.R`,
+**What's covered**: the reusable function libraries in `common/`, `synthetic/utils/dyngen_utils.R`,
 and `algorithms/run_cyclum.R`/`run_scPrisma.R`/`run_oscope.R` - argument-building, data
 wrangling, file I/O, control flow, and error handling, all exercised with small in-memory
 fixtures and mocked external calls (no conda envs, no network, no real training runs).
@@ -232,7 +241,8 @@ point of use:
 
 `synthetic/generate_datasets.R` produces the synthetic benchmark datasets (via
 [dyngen](https://github.com/dynverse/dyngen)) used by `synthetic/evaluate.R` and the grid-search
-scripts (`synthetic/cyclum_gs.R`, `synthetic/scPrisma_gs.R`, `synthetic/oscope_gs.R`).
+scripts (`synthetic/gridsearch/cyclum_gs.R`, `synthetic/gridsearch/scPrisma_gs.R`,
+`synthetic/gridsearch/oscope_gs.R`).
 **This is optional** — the exact datasets used in this project will also be uploaded to Zenodo
 (link TBD) for direct download, so you only need this section if you want to generate
 new/different synthetic data yourself rather than using the pre-generated ones.
@@ -247,6 +257,17 @@ install.packages(c("dyngen", "tidyverse", "dynwrap"))
 `dyngen::generate_dataset(model, format = "dyno")`, and that specific output format needs
 `dynwrap` to wrap the result — without it you'll hit `there is no package called 'dynwrap'`
 right at the last step of an otherwise-successful simulation.
+
+### Install Oscope
+
+`synthetic/run_oscope.R`/`gridsearch/oscope_gs.R` need Oscope, a Bioconductor package
+(`algorithms/run_oscope.R` calls into it directly - Oscope runs in-process rather than via a
+separate conda env, see "Repository layout" above):
+
+```r
+install.packages("BiocManager")
+BiocManager::install("Oscope")
+```
 
 ### Real network / real count reference data
 
@@ -272,11 +293,11 @@ source("synthetic/generate_datasets.R")
 For each of the 11 (n_cells, n_genes) combinations in the two cells/genes sweeps, this produces
 **two independent 5-replicate sets**, each in its own `c<n_cells>g<n_genes>` subdirectory:
 
-- **Tuning set** — `synthetic/data/dyngen_new/gridsearch/c<n_cells>g<n_genes>/`
-- **Evaluation set** — `synthetic/data/dyngen_new/c<n_cells>g<n_genes>/`
+- **Tuning set** — `synthetic/data/dyngen/gridsearch/c<n_cells>g<n_genes>/`
+- **Evaluation set** — `synthetic/data/dyngen/c<n_cells>g<n_genes>/`
 
 The split exists so hyperparameters are never chosen and scored on the same data: the tuning set
-is what `cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R` search over, and the evaluation set is what
+is what `gridsearch/cyclum_gs.R`/`scPrisma_gs.R`/`oscope_gs.R` search over, and the evaluation set is what
 `evaluate.R` reports performance on. Each combination gets its own subdirectory (rather than one
 flat directory) because `algorithms/run_cyclum.py`/`run_scPrisma.py` apply one fixed
 hyperparameter setting to every `.h5` file in whatever directory they're pointed at — different
@@ -289,15 +310,15 @@ subdirectory, and the script continues on to the next replicate rather than halt
 ### Hyperparameter tuning (optional but recommended)
 
 ```r
-source("synthetic/cyclum_gs.R")
-source("synthetic/scPrisma_gs.R")
-source("synthetic/oscope_gs.R")
+source("synthetic/gridsearch/cyclum_gs.R")
+source("synthetic/gridsearch/scPrisma_gs.R")
+source("synthetic/gridsearch/oscope_gs.R")
 ```
 
 Each script searches its algorithm's hyperparameter grid **separately for every (n_cells,
 n_genes) combination**, scoring each setting by mean AUC against dyngen's ground-truth cycling
 labels averaged across that combination's 5 tuning replicates. The winning hyperparameters per
-combination are saved to `synthetic/data/dyngen_new/gridsearch/best_hyperparams_<algorithm>.csv`.
+combination are saved to `synthetic/data/dyngen/gridsearch/best_hyperparams_<algorithm>.csv`.
 
 If this has been run, `synthetic/run_cyclum.R`/`run_scPrisma.R`/`run_oscope.R` (below) pick up
 each combination's own best hyperparameters automatically when run afterwards; otherwise they
@@ -374,14 +395,14 @@ Or run every step above in one go with `./myc/run_pipeline.sh`.
 
 ## Running the NF-kB oscillations pipeline
 
-`preprocess_nfkb.R` auto-downloads and unpacks the raw GEO data (accession `GSE162992`, via
+`preprocess.R` auto-downloads and unpacks the raw GEO data (accession `GSE162992`, via
 `GEOquery::getGEOSuppFiles()`) the first time it's run, if it isn't already present under
 `nfkb/data/GSE162992/` — no separate download step needed.
 
 ```r
 # 1. Demultiplex by HTO, QC-filter, and split into per-condition raw UMI count .h5 files
 #    (raw data auto-downloaded if missing)
-source("nfkb/preprocess_nfkb.R")
+source("nfkb/preprocess.R")
 
 # 2. Run each algorithm (each activates its own conda env via reticulate)
 source("nfkb/run_cyclum.R")

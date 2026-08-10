@@ -5,7 +5,6 @@ library(dplyr)
 library(clusterProfiler)
 library(enrichplot)
 library(org.Mm.eg.db)
-library(readr)
 library(msigdbr)
 library(BiocParallel)
 library(ggplot2)
@@ -13,8 +12,6 @@ library(ggpubr)
 library(ggrepel)
 library(dorothea)
 library(TFEA.ChIP)
-library(GenomicRanges)
-library(tidyr)
 
 register(SerialParam())  # force single threaded - otherwise fgsea hangs...windows things
 
@@ -30,6 +27,11 @@ results_root <- file.path(proj_root, "nfkb/results")
 # Get all .h5 files in directory
 input_data_files <- list.files(nfkb_dir, pattern = "\\.h5$", full.names = TRUE)
 cat("Found", length(input_data_files), "files to process\n")
+
+# Built once and passed into every run_pathway_analyses() call below - species is
+# fixed for this whole script, so these would otherwise be rebuilt on every call.
+hallmark_geneset   <- build_hallmark_geneset("Mus musculus")
+dorothea_term2gene <- build_dorothea_term2gene("mouse", org.Mm.eg.db)
 
 # Run the full pipeline for each algorithm. Outputs go to a per-algorithm
 # subdirectory (nfkb/figures/<algorithm>/) so the two runs never overwrite
@@ -65,11 +67,13 @@ for (algorithm in c("cyclum", "scPrisma")) {
     geneList <- build_ranked_gene_list(results_df, org_db = org.Mm.eg.db)
 
     pathway_results <- run_pathway_analyses(
-      geneList    = geneList,
-      species     = "mouse",
-      figures_dir = figures_dir,
-      fname       = fname,
-      algorithm   = algorithm
+      geneList           = geneList,
+      species            = "mouse",
+      figures_dir        = figures_dir,
+      fname              = fname,
+      algorithm          = algorithm,
+      hallmark           = hallmark_geneset,
+      dorothea_term2gene = dorothea_term2gene
     )
 
     # Store scores and hallmark results separately (hallmark feeds the
@@ -91,45 +95,36 @@ for (algorithm in c("cyclum", "scPrisma")) {
     algorithm         = algorithm
   )
 
-  # ---- Pairwise Hallmark Comparison Plots --------------------------------------
+  # ---- Pairwise Hallmark + Oscillation Score Comparison Plots ------------------
   # wt_tnf vs ss_tnf: same stimulus, does the TNF response differ by genotype?
   # wt_none vs wt_tnf: same genotype, what does TNF stimulation itself change?
-  plot_hallmark_comparison(
-    hallmark_a  = all_results[["wt_tnf"]]$hallmark,
-    hallmark_b  = all_results[["ss_tnf"]]$hallmark,
-    label_a     = "wt_tnf",
-    label_b     = "ss_tnf",
-    figures_dir = figures_dir,
-    algorithm   = algorithm
-  )
-  plot_hallmark_comparison(
-    hallmark_a  = all_results[["wt_none"]]$hallmark,
-    hallmark_b  = all_results[["wt_tnf"]]$hallmark,
-    label_a     = "wt_none",
-    label_b     = "wt_tnf",
-    figures_dir = figures_dir,
-    algorithm   = algorithm
+  # A list rather than separate hardcoded calls so adding another pair (e.g. an
+  # lps or pic comparison) is a one-line addition here, not a copy-pasted block.
+  comparisons <- list(
+    c(a = "wt_tnf",  b = "ss_tnf"),
+    c(a = "wt_none", b = "wt_tnf")
   )
 
-  # ---- Pairwise Oscillation Score Comparison Plots -----------------------------
-  # Gene-level analogue of the Hallmark comparison plots above: one point per gene
-  # rather than per pathway.
-  plot_score_comparison(
-    scores_a    = all_results[["wt_tnf"]]$scores,
-    scores_b    = all_results[["ss_tnf"]]$scores,
-    label_a     = "wt_tnf",
-    label_b     = "ss_tnf",
-    figures_dir = figures_dir,
-    algorithm   = algorithm
-  )
-  plot_score_comparison(
-    scores_a    = all_results[["wt_none"]]$scores,
-    scores_b    = all_results[["wt_tnf"]]$scores,
-    label_a     = "wt_none",
-    label_b     = "wt_tnf",
-    figures_dir = figures_dir,
-    algorithm   = algorithm
-  )
+  for (cmp in comparisons) {
+    # Pathway-level: one point per Hallmark pathway
+    plot_hallmark_comparison(
+      hallmark_a  = all_results[[cmp[["a"]]]]$hallmark,
+      hallmark_b  = all_results[[cmp[["b"]]]]$hallmark,
+      label_a     = cmp[["a"]],
+      label_b     = cmp[["b"]],
+      figures_dir = figures_dir,
+      algorithm   = algorithm
+    )
+    # Gene-level analogue: one point per gene rather than per pathway
+    plot_score_comparison(
+      scores_a    = all_results[[cmp[["a"]]]]$scores,
+      scores_b    = all_results[[cmp[["b"]]]]$scores,
+      label_a     = cmp[["a"]],
+      label_b     = cmp[["b"]],
+      figures_dir = figures_dir,
+      algorithm   = algorithm
+    )
+  }
 
   # ---- Score Distribution Comparison Plot --------------------------------------
   cat("\n=== Creating score distribution comparison plot ===\n")
@@ -144,10 +139,11 @@ for (algorithm in c("cyclum", "scPrisma")) {
   cluster_order <- sort(unique(df$cluster))
   df$cluster <- factor(df$cluster, levels = cluster_order)
 
-  # Find reference group (wt_tnf)
-  reference_group <- grep("wt.*tnf|tnf.*wt", cluster_order, ignore.case = TRUE, value = TRUE)
-
-  if (length(reference_group) == 0) {
+  # Find reference group (wt_tnf) - same condition name used for the pairwise
+  # comparisons above
+  if ("wt_tnf" %in% cluster_order) {
+    reference_group <- "wt_tnf"
+  } else {
     cat("\nWarning: Could not find 'wt_tnf' group. Using first group as reference.\n")
     reference_group <- cluster_order[1]
   }

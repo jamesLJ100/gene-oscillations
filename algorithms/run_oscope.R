@@ -11,8 +11,9 @@ apply_oscope <- function(gene_expr_matrix, oscope_config) {
   FlagCluster_qt    <- oscope_config$FlagCluster_qt
   FlagCluster_thre  <- oscope_config$FlagCluster_thre
 
-  cat(sprintf("Config: KM_maxK=%d, KM_quan=%.2f, MeanCutLow=%.3f, FlagCluster_qt=%.2f, FlagCluster_thre=%.3f\n",
-              KM_maxK, KM_quan, CalcMV_MeanCutLow, FlagCluster_qt, FlagCluster_thre))
+  KM_maxK_display <- if (is.null(KM_maxK)) "auto" else KM_maxK
+  cat(sprintf("Config: KM_maxK=%s, KM_quan=%.2f, MeanCutLow=%.3f, FlagCluster_qt=%.2f, FlagCluster_thre=%.3f\n",
+              KM_maxK_display, KM_quan, CalcMV_MeanCutLow, FlagCluster_qt, FlagCluster_thre))
 
   gene_expr_matrix <- as.matrix(gene_expr_matrix)
   all_genes <- rownames(gene_expr_matrix)
@@ -37,39 +38,16 @@ apply_oscope <- function(gene_expr_matrix, oscope_config) {
   MV         <- CalcMV(Data = DataNorm, Sizes = NULL, NormData = TRUE, MeanCutLow = CalcMV_MeanCutLow)
   DataSubset <- DataNorm[MV$GeneToUse,]
 
-  # # Select high mean / high variance genes for sine model input
-  # MV <- CalcMV(Data = gene_expr_matrix, Sizes = NULL, NormData = TRUE, MeanCutLow = CalcMV_MeanCutLow)
-  # cat(sprintf("CalcMV: %d genes suggested (GeneToUse) out of %d total\n",
-  #             length(MV$GeneToUse), length(all_genes)))
-  # 
-  # if (length(MV$GeneToUse) == 0) {
-  #   warning("No genes passed mean-variance filtering")
-  #   return(list(gene_classification = NULL, SineRes = NULL))
-  # }
-  # cat(sprintf("  %d / %d genes passed MV filter\n", length(MV$GeneToUse), nrow(DataNorm)))
-  
   # Rescale to [-1, 1] for sine model
   DataInput <- NormForSine(DataSubset)
-  # DataInput_full <- as.matrix(DataNormScaled[MV$GeneToUse, , drop = FALSE])
-  # cat(sprintf("After MV, before complete.cases: %d genes\n", nrow(DataInput_full)))
-  # 
-  # DataInput <- DataInput_full[complete.cases(DataInput_full), , drop = FALSE]
-  # cat(sprintf("After complete.cases: %d genes (dropped %d)\n",
-  #             nrow(DataInput), nrow(DataInput_full) - nrow(DataInput)))
-  # 
-  # if (nrow(DataInput) < 2) {
-  #   warning(sprintf("Too few genes after filtering: %d", nrow(DataInput)))
-  #   return(list(gene_classification = NULL, SineRes = NULL))
-  # }
-  # cat(sprintf("  %d genes passed all filters for sine model\n", nrow(DataInput)))
-  
+
   # Paired-sine model
   cat("Running OscopeSine...\n")
   SineRes <- OscopeSine(DataInput)
   cat("OscopeSine completed.\n")
   
   # K-medoids clustering
-  cat(sprintf("Running OscopeKM (maxK=%d, quan=%.2f)...\n", KM_maxK, KM_quan))
+  cat(sprintf("Running OscopeKM (maxK=%s, quan=%.2f)...\n", KM_maxK_display, KM_quan))
   KMRes <- tryCatch(
     OscopeKM(SineRes, maxK = KM_maxK, quan = KM_quan),
     error = function(e) {
@@ -90,25 +68,35 @@ apply_oscope <- function(gene_expr_matrix, oscope_config) {
     # Flag clusters with small within-cluster phase shift
     cat(sprintf("Running FlagCluster (qt=%.2f, thre=%.3f)...\n",
                 FlagCluster_qt, FlagCluster_thre))
-    ToRM <- FlagCluster(SineRes, KMRes, DataInput,
-                        qt = FlagCluster_qt, thre = FlagCluster_thre)
-    
-    cat(sprintf("  Clusters before flagging: %d\n", length(KMRes)))
-    cat("  FlagID from FlagCluster: ", paste(ToRM$FlagID, collapse = ", "), "\n")
-    
-    for (k in seq_along(KMRes)) {
-      flagged <- k %in% ToRM$FlagID
-      cat(sprintf("  Cluster %d: %d genes [%s]\n",
-                  k, length(KMRes[[k]]), if (flagged) "FLAGGED" else "kept"))
-    }
-    
-    if (length(ToRM$FlagID) > 0) {
-      cat(sprintf("  Removing %d flagged cluster(s)\n", length(ToRM$FlagID)))
-      KMResUse <- KMRes[-ToRM$FlagID]
+    ToRM <- tryCatch(
+      FlagCluster(SineRes, KMRes, DataInput,
+                  qt = FlagCluster_qt, thre = FlagCluster_thre),
+      error = function(e) {
+        cat(sprintf("FlagCluster failed (likely a degenerate cluster): %s\n", e$message))
+        return(NULL)
+      }
+    )
+
+    if (is.null(ToRM)) {
+      KMResUse <- list()
     } else {
-      KMResUse <- KMRes
+      cat(sprintf("  Clusters before flagging: %d\n", length(KMRes)))
+      cat("  FlagID from FlagCluster: ", paste(ToRM$FlagID, collapse = ", "), "\n")
+
+      for (k in seq_along(KMRes)) {
+        flagged <- k %in% ToRM$FlagID
+        cat(sprintf("  Cluster %d: %d genes [%s]\n",
+                    k, length(KMRes[[k]]), if (flagged) "FLAGGED" else "kept"))
+      }
+
+      if (length(ToRM$FlagID) > 0) {
+        cat(sprintf("  Removing %d flagged cluster(s)\n", length(ToRM$FlagID)))
+        KMResUse <- KMRes[-ToRM$FlagID]
+      } else {
+        KMResUse <- KMRes
+      }
     }
-    
+
     cat(sprintf("  Clusters after flagging: %d\n", length(KMResUse)))
     
     if (length(KMResUse) > 0) {
@@ -147,47 +135,53 @@ read_data_file <- function(file_path) {
 }
 
 # ===== PROCESS SINGLE FILE =====
-process_data_file <- function(file_path, oscope_config, run_number = NULL) {
+process_data_file <- function(file_path, oscope_config, skip_if_exists = FALSE) {
   cat(sprintf("Processing file: %s\n", file_path))
-  
+
+  filepath   <- dirname(file_path)
+  fname      <- tools::file_path_sans_ext(basename(file_path))
+  output_dir <- file.path(filepath, 'oscope')
+  csv_path   <- file.path(output_dir, sprintf('%s.csv', fname))
+
+  if (skip_if_exists && file.exists(csv_path) && file.size(csv_path) > 0) {
+    cat(sprintf("Skipping %s: output already exists at %s\n", fname, csv_path))
+    return(data.frame(
+      file = fname, runtime_seconds = NA_real_, n_genes = NA_integer_,
+      n_samples = NA_integer_, n_oscillating = NA_integer_, error = NA_character_,
+      stringsAsFactors = FALSE
+    ))
+  }
+
   tryCatch({
     df <- read_data_file(file_path)
     cat(sprintf("Matrix shape: %d x %d (genes x samples)\n", nrow(df), ncol(df)))
-    
+
     start_time <- Sys.time()
     result     <- apply_oscope(df, oscope_config)
     elapsed    <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
-    
-    filepath   <- dirname(file_path)
-    fname      <- tools::file_path_sans_ext(basename(file_path))
-    output_dir <- file.path(filepath, 'oscope')
+
     dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-    
-    # Create run number suffix if provided (inserted before tool name)
-    if (!is.null(run_number)) {
-      run_suffix <- sprintf("_r%d", run_number)
-    } else {
-      run_suffix <- ""
-    }
-    
+
     gene_classification <- result$gene_classification
     if (!is.null(gene_classification)) {
-      csv_path <- file.path(output_dir, sprintf('%s%s.csv', fname, run_suffix))
-      
       gene_df <- gene_classification[, c("gene", "is_oscillating")]
       colnames(gene_df) <- c("symbol", "score")
       gene_df$score <- as.integer(gene_df$score)  # TRUE/FALSE -> 1/0
       gene_df <- gene_df[order(-gene_df$score), ]
-      
-      write.csv(gene_df, csv_path, row.names = FALSE)
+
+      # Write to a temp path, then rename into place - avoids a truncated file at
+      # csv_path if the process is killed mid-write.
+      tmp_path <- paste0(csv_path, ".tmp")
+      write.csv(gene_df, tmp_path, row.names = FALSE)
+      file.rename(tmp_path, csv_path)
       cat(sprintf("Gene classification saved to: %s\n", csv_path))
-      
+
       n_oscillating <- sum(gene_df$score, na.rm = TRUE)
       n_total       <- nrow(gene_df)
       cat(sprintf("  --> %d / %d genes are oscillating (%.1f%%)\n",
                   n_oscillating, n_total, 100 * n_oscillating / n_total))
     }
-    
+
     return(data.frame(
       file            = fname,
       runtime_seconds = elapsed,
@@ -221,15 +215,19 @@ process_data_file <- function(file_path, oscope_config, run_number = NULL) {
 #' @param oscope_config List with elements KM_maxK, KM_quan, CalcMV_MeanCutLow,
 #'   FlagCluster_qt, FlagCluster_thre. Cross-sample library-size normalization is
 #'   always applied internally (not configurable) - see apply_oscope() for why.
-#' @param run_number Optional integer appended to output filenames (for grid search / repeat runs)
+#' @param skip_if_exists If TRUE, skip (rather than recompute and overwrite) any file
+#'   whose output already exists - for resuming an interrupted evaluation run. Leave
+#'   FALSE for grid search, which must always recompute since the same file's output
+#'   path is reused across different hyperparameter combinations.
 #' @return Invisibly NULL; per-file gene classifications are written to
-#'   <input_dir>/oscope/, and a combined runtimes.csv summarising all files
+#'   <input_dir>/oscope/ (overwriting any previous results for the same file, unless
+#'   skip_if_exists = TRUE), and a combined runtimes.csv summarising all files
 # ===== MAIN FUNCTION =====
-run_oscope <- function(input_dir, oscope_config, run_number = NULL) {
+run_oscope <- function(input_dir, oscope_config, skip_if_exists = FALSE) {
   input_dir_abs <- normalizePath(input_dir, mustWork = FALSE)
-  
+
   cat(sprintf("Current working directory: %s\n", getwd()))
-  
+
   if (!dir.exists(input_dir_abs)) {
     stop("Directory does not exist: ", input_dir_abs)
   }
@@ -249,18 +247,13 @@ run_oscope <- function(input_dir, oscope_config, run_number = NULL) {
   if (length(data_files) == 0) {
     stop("No H5 files found in: ", input_dir_abs)
   }
-  
-  # Print run_number info if provided
-  if (!is.null(run_number)) {
-    cat(sprintf("Run number: %d\n", run_number))
-  }
-  
+
   timing_records <- list()
   for (idx in seq_along(data_files)) {
     file_path <- data_files[idx]
     cat(sprintf("\n=== Processing file %d/%d: %s ===\n",
                 idx, length(data_files), basename(file_path)))
-    timing_records[[idx]] <- process_data_file(file_path, oscope_config, run_number)
+    timing_records[[idx]] <- process_data_file(file_path, oscope_config, skip_if_exists = skip_if_exists)
   }
   
   timing_df <- do.call(rbind, timing_records)

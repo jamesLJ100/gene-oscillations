@@ -14,12 +14,15 @@ library(reticulate)
 #' @param iternum Integer, number of iterations (default 100)
 #' @param n_top_genes Optional integer, number of highly variable genes to select
 #'   (default: Python script's own default of 5000 if NULL)
-#' @param run_number Optional integer appended to output filenames (for grid search / repeat runs)
+#' @param skip_if_exists If TRUE, skip (rather than recompute and overwrite) any file
+#'   whose output already exists - for resuming an interrupted evaluation run. Leave
+#'   FALSE for grid search, which must always recompute since the same file's output
+#'   path is reused across different hyperparameter combinations.
 #' @param proj_root Project root directory (default here::here())
 #' @return The exit code from the underlying Python process (invisibly)
 run_scPrisma <- function(input_dir, output_dir = NULL,
                           regularisation_strength = 0.1, iternum = 100L, n_top_genes = NULL,
-                          run_number = NULL, proj_root = here::here()) {
+                          skip_if_exists = FALSE, proj_root = here::here()) {
 
   if (!is.null(output_dir)) dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -31,7 +34,7 @@ run_scPrisma <- function(input_dir, output_dir = NULL,
   )
   if (!is.null(output_dir))  args <- c(args, "--output_dir", output_dir)
   if (!is.null(n_top_genes)) args <- c(args, "--n_top_genes", as.character(n_top_genes))
-  if (!is.null(run_number))  args <- c(args, "--run_number", as.character(run_number))
+  if (skip_if_exists)        args <- c(args, "--skip_if_exists")
 
   exit_code <- system2(
     command = reticulate::py_config()$python,

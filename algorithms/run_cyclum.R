@@ -12,12 +12,15 @@ library(reticulate)
 #' @param encoder_width Integer vector, encoder hidden-layer widths (default c(30, 20))
 #' @param epochs Integer, training epochs (default 500)
 #' @param learning_rate Numeric, training learning rate (default 2e-4)
-#' @param run_number Optional integer appended to output filenames (for grid search / repeat runs)
+#' @param skip_if_exists If TRUE, skip (rather than recompute and overwrite) any file
+#'   whose output already exists - for resuming an interrupted evaluation run. Leave
+#'   FALSE for grid search, which must always recompute since the same file's output
+#'   path is reused across different hyperparameter combinations.
 #' @param proj_root Project root directory (default here::here())
 #' @return The exit code from the underlying Python process (invisibly)
 run_cyclum <- function(input_dir, output_dir = NULL,
                         encoder_width = c(30L, 20L), epochs = 500L, learning_rate = 2e-4,
-                        run_number = NULL, proj_root = here::here()) {
+                        skip_if_exists = FALSE, proj_root = here::here()) {
 
   if (!is.null(output_dir)) dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -29,7 +32,7 @@ run_cyclum <- function(input_dir, output_dir = NULL,
     "--learning_rate", sprintf("%.0e", learning_rate)
   )
   if (!is.null(output_dir)) args <- c(args, "--output_dir", output_dir)
-  if (!is.null(run_number)) args <- c(args, "--run_number", as.character(run_number))
+  if (skip_if_exists) args <- c(args, "--skip_if_exists")
 
   exit_code <- system2(
     command = reticulate::py_config()$python,

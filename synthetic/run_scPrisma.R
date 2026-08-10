@@ -5,14 +5,14 @@ library(here)
 proj_root <- here::here()
 setwd(proj_root)
 source(file.path(proj_root, "algorithms/run_scPrisma.R"))
-source(file.path(proj_root, "synthetic/dyngen_utils.R"))
+source(file.path(proj_root, "synthetic/utils/dyngen_utils.R"))
 
 use_condaenv("scPrisma_env", required = TRUE)
 
-# Run against the held-out evaluation set (not the tuning set scPrisma_gs.R uses),
+# Run against the held-out evaluation set (not the tuning set gridsearch/scPrisma_gs.R uses),
 # with each (n_cells, n_genes) combination's own best hyperparameters if
-# scPrisma_gs.R has been run for it, otherwise these defaults.
-eval_root       <- file.path(proj_root, "synthetic/data/dyngen_new")
+# gridsearch/scPrisma_gs.R has been run for it, otherwise these defaults.
+eval_root       <- file.path(proj_root, "synthetic/data/dyngen")
 gridsearch_root <- file.path(eval_root, "gridsearch")
 combos          <- list_combo_dirs(eval_root)
 
@@ -29,7 +29,8 @@ for (i in seq_len(nrow(combos))) {
   run_scPrisma(
     input_dir                = combos$path[i],
     regularisation_strength  = as.numeric(hp$regularisation_strength),
-    iternum                  = as.integer(hp$iternum)
+    iternum                  = as.integer(hp$iternum),
+    skip_if_exists           = TRUE
   )
 }
 

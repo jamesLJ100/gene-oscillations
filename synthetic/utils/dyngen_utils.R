@@ -4,7 +4,7 @@ library(ROCR)
 #' Discover per-(n_cells, n_genes)-combination subdirectories
 #'
 #' generate_datasets.R writes each combination's replicates to its own
-#' "c<n_cells>g<n_genes>" subdirectory (under synthetic/data/dyngen_new/ for the
+#' "c<n_cells>g<n_genes>" subdirectory (under synthetic/data/dyngen/ for the
 #' evaluation set, or .../gridsearch/ for the tuning set) rather than a flat
 #' directory - required because run_cyclum.py/run_scPrisma.py each apply one
 #' fixed hyperparameter setting to every .h5 file in whatever directory they're
@@ -41,7 +41,7 @@ list_combo_dirs <- function(base_dir) {
 #' @param algorithm Algorithm name ("cyclum", "scPrisma", "oscope") - looks up
 #'   <gridsearch_root>/best_hyperparams_<algorithm>.csv (written by tune_per_combo())
 #' @param gridsearch_root Directory containing that CSV
-#'   (synthetic/data/dyngen_new/gridsearch/)
+#'   (synthetic/data/dyngen/gridsearch/)
 #' @param n_cells,n_genes The combination to look up
 #' @param defaults Named list of fallback hyperparameter values, one element per
 #'   hyperparameter this algorithm needs
@@ -50,9 +50,16 @@ list_combo_dirs <- function(base_dir) {
 get_best_hyperparams <- function(algorithm, gridsearch_root, n_cells, n_genes, defaults) {
 
   best_csv <- file.path(gridsearch_root, paste0("best_hyperparams_", algorithm, ".csv"))
+  print_hp <- function(hp) {
+    cat(sprintf("Hyperparameters for c%dg%d: %s\n", n_cells, n_genes,
+                 paste(sprintf("%s=%s", names(hp), vapply(hp, paste, character(1), collapse = ",")),
+                       collapse = ", ")))
+  }
 
   if (!file.exists(best_csv)) {
-    cat("No grid search results found at", best_csv, "- using default hyperparameters.\n")
+    warning(sprintf("No grid search results found at %s - using default hyperparameters for c%dg%d.",
+                     best_csv, n_cells, n_genes), call. = FALSE, immediate. = TRUE)
+    print_hp(defaults)
     return(defaults)
   }
 
@@ -60,12 +67,28 @@ get_best_hyperparams <- function(algorithm, gridsearch_root, n_cells, n_genes, d
   match_row <- best_df[best_df$n_cells == n_cells & best_df$n_genes == n_genes, ]
 
   if (nrow(match_row) == 0) {
-    cat(sprintf("No grid search result for c%dg%d in %s - using default hyperparameters.\n",
-                n_cells, n_genes, best_csv))
+    warning(sprintf("No grid search result for c%dg%d in %s - using default hyperparameters.",
+                     n_cells, n_genes, best_csv), call. = FALSE, immediate. = TRUE)
+    print_hp(defaults)
     return(defaults)
   }
 
-  as.list(match_row[1, names(defaults), drop = FALSE])
+  # A hyperparameter might not be a logged column (e.g. a fixed, non-swept value the
+  # grid search didn't record) - fall back to its own default individually rather than
+  # failing the whole lookup.
+  missing_cols <- setdiff(names(defaults), names(match_row))
+  if (length(missing_cols) > 0) {
+    warning(sprintf("%s not logged in %s for c%dg%d - using default value(s) for: %s.",
+                     algorithm, best_csv, n_cells, n_genes, paste(missing_cols, collapse = ", ")),
+            call. = FALSE, immediate. = TRUE)
+  }
+
+  hp <- setNames(lapply(names(defaults), function(param) {
+    if (param %in% names(match_row)) match_row[[param]][1] else defaults[[param]]
+  }), names(defaults))
+
+  print_hp(hp)
+  hp
 }
 
 #' Score an algorithm's cycling scores against dyngen's ground-truth cycling
@@ -93,11 +116,11 @@ score_against_ground_truth <- function(fname, sim_dir, results_df) {
   # Only evaluate on genes at most one hop from a TF (hops <= 1); this also
   # drops cycle genes with NA hops, since NA <= 1 is NA (filtered out).
   cycling_genes <- gene_module_assignments %>%
-    filter(module %in% c("B", "C", "D"), hops <= 1) %>%
+    dplyr::filter(module %in% c("B", "C", "D"), hops <= 1) %>%
     pull(gene)
 
   gene_symbols <- rownames(sim$counts)
-  eval_genes   <- gene_module_assignments %>% filter(hops <= 1) %>% pull(gene)
+  eval_genes   <- gene_module_assignments %>% dplyr::filter(hops <= 1) %>% pull(gene)
   eval_symbols <- gene_symbols[gene_symbols %in% eval_genes]
 
   label_df <- data.frame(symbol = eval_symbols, label = 0L)
@@ -115,22 +138,82 @@ score_against_ground_truth <- function(fname, sim_dir, results_df) {
   list(auc = auc_val)
 }
 
+#' Compute accuracy/precision/recall/F1 at a single operating point
+#'
+#' Binary (0/1) scores (e.g. Oscope's gene classification) are evaluated directly at
+#' that decision, since there's no cutoff left to search once the algorithm has
+#' already made a hard call - searching anyway can land on the degenerate "predict
+#' everyone positive" cutoff and look artificially good under class imbalance.
+#' Continuous scores use each (algorithm, file)'s own F1-maximising cutoff via ROCR,
+#' since a fixed cutoff (e.g. 0.5) isn't comparable across algorithms whose scores
+#' live on different scales.
+#'
+#' @param scores Numeric vector of predicted scores
+#' @param labels Integer vector of ground-truth 0/1 labels, same length as scores
+#' @return List with accuracy, precision, recall, f1 (NA_real_ where undefined) and
+#'   `predicted` - the 0/1 predicted label at the cutoff actually used, same length
+#'   and order as `scores`/`labels` (lets a caller classify each gene as a
+#'   TP/FP/FN/TN using the exact same cutoff the metrics above are based on)
+compute_threshold_metrics <- function(scores, labels) {
+  if (all(scores %in% c(0, 1))) {
+    pred_pos   <- scores == 1
+    actual_pos <- labels == 1
+    tp <- sum(pred_pos & actual_pos)
+    fp <- sum(pred_pos & !actual_pos)
+    fn <- sum(!pred_pos & actual_pos)
+    tn <- sum(!pred_pos & !actual_pos)
+
+    accuracy  <- (tp + tn) / length(scores)
+    precision <- if (tp + fp > 0) tp / (tp + fp) else NA_real_
+    recall    <- if (tp + fn > 0) tp / (tp + fn) else NA_real_
+    f1        <- if (!is.na(precision) && !is.na(recall) && (precision + recall) > 0) {
+      2 * precision * recall / (precision + recall)
+    } else NA_real_
+
+    return(list(accuracy = accuracy, precision = precision, recall = recall, f1 = f1,
+                predicted = as.integer(pred_pos)))
+  }
+
+  pred_obj  <- prediction(scores, labels)
+  f1_perf   <- performance(pred_obj, "f")
+  acc_perf  <- performance(pred_obj, "acc")
+  prec_perf <- performance(pred_obj, "prec")
+  rec_perf  <- performance(pred_obj, "rec")
+
+  best_idx <- which.max(f1_perf@y.values[[1]])
+
+  predicted <- if (length(best_idx) > 0) {
+    cutoff <- f1_perf@x.values[[1]][best_idx]
+    as.integer(scores >= cutoff)
+  } else {
+    rep(NA_integer_, length(scores))
+  }
+
+  list(
+    f1        = if (length(best_idx) > 0) f1_perf@y.values[[1]][best_idx]   else NA_real_,
+    accuracy  = if (length(best_idx) > 0) acc_perf@y.values[[1]][best_idx]  else NA_real_,
+    precision = if (length(best_idx) > 0) prec_perf@y.values[[1]][best_idx] else NA_real_,
+    recall    = if (length(best_idx) > 0) rec_perf@y.values[[1]][best_idx]  else NA_real_,
+    predicted = predicted
+  )
+}
+
 propagate_module_assignments <- function(sim, context = NULL) {
 
   feature_net <- sim$model$feature_network
   
   tf_modules <- bind_rows(
     feature_net %>%
-      filter(!is.na(from_module)) %>%
+      dplyr::filter(!is.na(from_module)) %>%
       dplyr::select(gene = from, module = from_module),
     feature_net %>%
-      filter(!is.na(to_module)) %>%
+      dplyr::filter(!is.na(to_module)) %>%
       dplyr::select(gene = to, module = to_module)
   ) %>%
     distinct()
   
   target_edges <- feature_net %>%
-    filter(grepl("^Target", to)) %>%
+    dplyr::filter(grepl("^Target", to)) %>%
     dplyr::select(from, to)
 
   target_indegree <- table(target_edges$to)
@@ -153,8 +236,8 @@ propagate_module_assignments <- function(sim, context = NULL) {
     if (length(unresolved) == 0) break
     
     newly_resolved <- target_edges %>%
-      filter(to %in% unresolved, from %in% names(gene_module)) %>%
-      mutate(
+      dplyr::filter(to %in% unresolved, from %in% names(gene_module)) %>%
+      dplyr::mutate(
         module = gene_module[from],
         hops   = hops[from] + 1L
       )
@@ -190,6 +273,3 @@ propagate_module_assignments <- function(sim, context = NULL) {
     hops   = unname(hops)
   )
 }
-# sim_file <- file.path(proj_root, "synthetic/data/dyngen", paste0("c50g207_1", "_sim.rds"))
-# sim <- readRDS(sim_file)
-# result <- propagate_module_assignments(sim)

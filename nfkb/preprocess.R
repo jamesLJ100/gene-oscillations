@@ -11,41 +11,39 @@ required_files <- file.path(raw_dir, c(
   "GSM4969860_WT_barcodes.tsv.gz", "GSM4969860_WT_features.tsv.gz", "GSM4969860_WT_matrix.mtx.gz",
   "GSM4969861_IkBaMM_barcodes.tsv.gz", "GSM4969861_IkBaMM_features.tsv.gz", "GSM4969861_IkBaMM_matrix.mtx.gz"
 ))
-if (!all(file.exists(required_files))) source(file.path(proj_root, "nfkb/download_nfkb_data.R"))
+if (!all(file.exists(required_files))) source(file.path(proj_root, "nfkb/download.R"))
 
-# Create directories
-dir.create(file.path(raw_dir, "WT"), showWarnings = FALSE, recursive = TRUE)
-dir.create(file.path(raw_dir, "IkBaMM"), showWarnings = FALSE, recursive = TRUE)
+# Copy each GSM's raw files into a per-mouse-type folder named the way Read10X()
+# expects (barcodes/features/matrix.*, no GSM/condition prefix).
+gsm_by_type <- c(WT = "GSM4969860", IkBaMM = "GSM4969861")
+file_ext    <- c(barcodes = "tsv.gz", features = "tsv.gz", matrix = "mtx.gz")
 
-# Copy WT files
-file.copy(file.path(raw_dir, "GSM4969860_WT_barcodes.tsv.gz"),
-          file.path(raw_dir, "WT/barcodes.tsv.gz"), overwrite = TRUE)
-file.copy(file.path(raw_dir, "GSM4969860_WT_features.tsv.gz"),
-          file.path(raw_dir, "WT/features.tsv.gz"), overwrite = TRUE)
-file.copy(file.path(raw_dir, "GSM4969860_WT_matrix.mtx.gz"),
-          file.path(raw_dir, "WT/matrix.mtx.gz"), overwrite = TRUE)
-
-# Copy IkBaMM (SS) files
-file.copy(file.path(raw_dir, "GSM4969861_IkBaMM_barcodes.tsv.gz"),
-          file.path(raw_dir, "IkBaMM/barcodes.tsv.gz"), overwrite = TRUE)
-file.copy(file.path(raw_dir, "GSM4969861_IkBaMM_features.tsv.gz"),
-          file.path(raw_dir, "IkBaMM/features.tsv.gz"), overwrite = TRUE)
-file.copy(file.path(raw_dir, "GSM4969861_IkBaMM_matrix.mtx.gz"),
-          file.path(raw_dir, "IkBaMM/matrix.mtx.gz"), overwrite = TRUE)
+for (mouse_type in names(gsm_by_type)) {
+  dir.create(file.path(raw_dir, mouse_type), showWarnings = FALSE, recursive = TRUE)
+  for (file_type in names(file_ext)) {
+    file.copy(
+      file.path(raw_dir, sprintf("%s_%s_%s.%s", gsm_by_type[[mouse_type]], mouse_type,
+                                  file_type, file_ext[[file_type]])),
+      file.path(raw_dir, mouse_type, sprintf("%s.%s", file_type, file_ext[[file_type]])),
+      overwrite = TRUE
+    )
+  }
+}
 
 # Load data
 wt     <- Read10X(data.dir = file.path(raw_dir, "WT"))
 ss     <- Read10X(data.dir = file.path(raw_dir, "IkBaMM"))
 
-# ── Function to process a single mouse type ───────────────────────────────────
 
-process_mouse_type <- function(data, mouse_type, prefix_pattern) {
+process_mouse_type <- function(data, mouse_type) {
+
+  # e.g. "WT" -> "^WT_|_TotalSeqB$" - derived rather than passed separately so the
+  # two can't drift out of sync.
+  prefix_pattern <- sprintf("^%s_|_TotalSeqB$", mouse_type)
   
-  cat("\n========================================\n")
   cat("Processing:", mouse_type, "\n")
-  cat("========================================\n")
-  
-  # ── Step 1: Create Seurat object and filter by minimum features ─────────────
+
+  # Create Seurat object and filter by minimum features
   
   seurat_obj <- CreateSeuratObject(
     counts       = data$`Gene Expression`,
@@ -55,7 +53,7 @@ process_mouse_type <- function(data, mouse_type, prefix_pattern) {
   
   cat("Cells after >=1500 feature filter:", ncol(seurat_obj), "\n")
   
-  # ── Step 2: Calculate QC metrics and filter ─────────────────────────────────
+  # Calculate QC metrics and filter
   
   seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^mt-")
   
@@ -66,7 +64,7 @@ process_mouse_type <- function(data, mouse_type, prefix_pattern) {
   
   cat("Cells after QC filtering:", ncol(seurat_obj), "\n")
   
-  # ── Step 3: Assign HTO labels from antibody capture ─────────────────────────
+  # Assign HTO labels from antibody capture
   
   ab       <- data$`Antibody Capture`
   ab_dense <- as.matrix(ab)
@@ -81,23 +79,18 @@ process_mouse_type <- function(data, mouse_type, prefix_pattern) {
   
   ab_proportions <- sweep(ab_filtered, 2, safe_totals, FUN = "/")
   
-  max_ab <- vapply(seq_len(ncol(ab_proportions)), function(i) {
-    col <- ab_proportions[, i]
-    if (all(col == 0)) return(NA_integer_)
-    which.max(col)
-  }, integer(1))
-  
-  max_prop <- vapply(seq_len(ncol(ab_proportions)), function(i) {
-    col <- ab_proportions[, i]
-    if (all(col == 0)) return(0)
-    max(col)
-  }, numeric(1))
-  
+  # max.col() operates row-wise, so transpose to get one row per cell. A cell with
+  # no antibody signal at all (all-zero column) still gets an arbitrary index here,
+  # but its max_prop is 0, so it's excluded below by the >= 0.75 threshold regardless
+  # - no special-casing needed for that case.
+  max_ab   <- max.col(t(ab_proportions), ties.method = "first")
+  max_prop <- apply(ab_proportions, 2, max)
+
   # Remove prefix pattern from antibody names
   clean_names <- gsub(prefix_pattern, "", rownames(ab_filtered))
-  
+
   cell_labels <- ifelse(
-    !is.na(max_ab) & max_prop >= 0.75,
+    max_prop >= 0.75,
     clean_names[max_ab],
     "Unassigned"
   )
@@ -106,7 +99,7 @@ process_mouse_type <- function(data, mouse_type, prefix_pattern) {
   cat("\nCell label distribution:\n")
   print(table(cell_labels))
   
-  # ── Step 4: Add labels to Seurat object ─────────────────────────────────────
+  # Add labels to Seurat object
   
   seurat_obj$HTO_classification <- cell_labels[colnames(seurat_obj)]
   
@@ -121,27 +114,21 @@ process_mouse_type <- function(data, mouse_type, prefix_pattern) {
   return(assigned_obj)
 }
 
-# ── Process both mouse types ──────────────────────────────────────────────────
 
-wt_assigned <- process_mouse_type(wt, "WT", "^WT_|_TotalSeqB$")
-ss_assigned <- process_mouse_type(ss, "IkBaMM", "^IkBaMM_|_TotalSeqB$")
+wt_assigned <- process_mouse_type(wt, "WT")
+ss_assigned <- process_mouse_type(ss, "IkBaMM")
 
-# ── Step 5: Save to HDF5 files by condition ──────────────────────────────────
-
+# Save to HDF5 files by condition
 save_by_condition <- function(seurat_obj, mouse_type_label) {
 
-  # Create output directory
   processed_dir <- file.path(proj_root, "nfkb/data/GSE162992/processed")
   dir.create(processed_dir, showWarnings = FALSE, recursive = TRUE)
   
-  # Get unique conditions
   conditions <- unique(seurat_obj$HTO_classification)
   conditions <- conditions[conditions != "Unassigned"]
   
-  cat("\n========================================\n")
   cat("Saving files for:", mouse_type_label, "\n")
-  cat("========================================\n")
-  
+
   for (condition in conditions) {
     # Subset cells for this condition
     subset_obj <- subset(seurat_obj, HTO_classification == condition)
@@ -171,10 +158,5 @@ save_by_condition <- function(seurat_obj, mouse_type_label) {
   }
 }
 
-# Save files for both mouse types
 save_by_condition(wt_assigned, "wt")
 save_by_condition(ss_assigned, "ss")
-
-cat("\n========================================\n")
-cat("Processing complete!\n")
-cat("========================================\n")

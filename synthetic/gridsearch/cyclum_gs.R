@@ -6,20 +6,20 @@ setwd(proj_root)
 source(file.path(proj_root, "algorithms/run_cyclum.R"))
 source(file.path(proj_root, "common/grid_search.R"))
 source(file.path(proj_root, "common/utils.R"))
-source(file.path(proj_root, "synthetic/dyngen_utils.R"))
+source(file.path(proj_root, "synthetic/utils/dyngen_utils.R"))
 
 use_condaenv("cyclum_env", required = TRUE)
 
 #TODO nonlinear_reg & check for others.
 
 # Find optimal hyperparameters separately for each (n_cells, n_genes) combination,
-# using only that combination's tuning-set replicates (synthetic/data/dyngen_new/
+# using only that combination's tuning-set replicates (synthetic/data/dyngen/
 # gridsearch/c<n_cells>g<n_genes>/, produced by generate_datasets.R with
 # is_tuning = TRUE). Results are evaluated against the *other* held-out set
-# (dyngen_new/c<n_cells>g<n_genes>/) in evaluate.R, using each combination's
+# (dyngen/c<n_cells>g<n_genes>/) in evaluate.R, using each combination's
 # chosen best hyperparameters via run_cyclum.R - never against the same data the
 # hyperparameters were chosen on.
-tuning_root <- file.path(proj_root, "synthetic/data/dyngen_new/gridsearch")
+tuning_root <- file.path(proj_root, "synthetic/data/dyngen/gridsearch")
 combos      <- list_combo_dirs(tuning_root)
 
 # Define grid search parameters. encoder_width is vector-valued, so it's stored as a
@@ -54,14 +54,13 @@ make_run_fn <- function(combo_dir, fnames) {
       input_dir     = combo_dir,
       encoder_width = encoder_width,
       epochs        = params$epochs,
-      learning_rate = params$learning_rate,
-      run_number    = run_number
+      learning_rate = params$learning_rate
     )
 
     # Score against ground truth on each of this combination's tuning replicates;
     # the mean across them is what selects the best hyperparameters for this combo.
     aucs <- sapply(fnames, function(fname) {
-      results_df <- get_model_scores("cyclum", combo_dir, fname, run_id = run_number)
+      results_df <- get_model_scores("cyclum", combo_dir, fname)
       score_against_ground_truth(fname, combo_dir, results_df)$auc
     })
 

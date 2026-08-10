@@ -117,7 +117,7 @@ load_scores <- function(algorithm, counts_files, file_prefix, cyclum_dir, scPris
 
   df <- bind_rows(results)
   # get_cyclum_scores returns "symbol" column — rename to gene
-  if ("symbol" %in% colnames(df)) df <- rename(df, gene = symbol)
+  if ("symbol" %in% colnames(df)) df <- dplyr::rename(df, gene = symbol)
   df
 }
 
@@ -415,10 +415,8 @@ run_evaluation <- function(algorithm, config, refs) {
   }
 
   # --- Plot 4: ref_cluster cells only, gene expression percentile distribution ---
-  # Rank genes by cycling score and highlight the segmentation-clock targets,
-  # annotating each with the percentile it falls at. Target list is mouse gene
-  # symbols, but matching is case-insensitive so it also finds human orthologs
-  # (e.g. HES7 in hIPSC data).
+  # Target list is mouse gene symbols, but matching is case-insensitive so it also
+  # finds human orthologs (e.g. HES7 in hIPSC data).
   target_genes <- c("Hes7", "Hes1", "Dll1", "Dkk1", "Lfng", "Axin2")
   p4 <- NULL
 

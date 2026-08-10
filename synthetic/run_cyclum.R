@@ -4,14 +4,14 @@ library(here)
 proj_root <- here::here()
 setwd(proj_root)
 source(file.path(proj_root, "algorithms/run_cyclum.R"))
-source(file.path(proj_root, "synthetic/dyngen_utils.R"))
+source(file.path(proj_root, "synthetic/utils/dyngen_utils.R"))
 
 use_condaenv("cyclum_env", required = TRUE)
 
-# Run against the held-out evaluation set (not the tuning set cyclum_gs.R uses),
+# Run against the held-out evaluation set (not the tuning set gridsearch/cyclum_gs.R uses),
 # with each (n_cells, n_genes) combination's own best hyperparameters if
-# cyclum_gs.R has been run for it, otherwise these defaults.
-eval_root       <- file.path(proj_root, "synthetic/data/dyngen_new")
+# gridsearch/cyclum_gs.R has been run for it, otherwise these defaults.
+eval_root       <- file.path(proj_root, "synthetic/data/dyngen")
 gridsearch_root <- file.path(eval_root, "gridsearch")
 combos          <- list_combo_dirs(eval_root)
 
@@ -26,7 +26,7 @@ for (i in seq_len(nrow(combos))) {
                               defaults = default_hyperparams)
 
   # encoder_width comes back as a "40, 30"-style string when sourced from a grid
-  # search result (see cyclum_gs.R), or as-is (a numeric vector) from defaults.
+  # search result (see gridsearch/cyclum_gs.R), or as-is (a numeric vector) from defaults.
   encoder_width <- if (is.character(hp$encoder_width)) {
     as.integer(trimws(strsplit(hp$encoder_width, ",")[[1]]))
   } else {
@@ -37,6 +37,7 @@ for (i in seq_len(nrow(combos))) {
     input_dir     = combos$path[i],
     encoder_width = encoder_width,
     epochs        = as.integer(hp$epochs),
-    learning_rate = as.numeric(hp$learning_rate)
+    learning_rate = as.numeric(hp$learning_rate),
+    skip_if_exists = TRUE
   )
 }

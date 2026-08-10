@@ -18,7 +18,7 @@ genes_to_plot <- c("Target7", "Target3", "Target92")
 proj_root <- here::here()
 setwd(proj_root)
 source(file.path(proj_root, "synthetic/run_dyngen.R"))
-source(file.path(proj_root, "synthetic/dyngen_utils.R"))
+source(file.path(proj_root, "synthetic/utils/dyngen_utils.R"))
 
 
 ## create directories
@@ -205,24 +205,6 @@ tf_modules <- feature_net %>%
 target_edges <- feature_net %>%
   filter(grepl("^Target", to)) %>%
   select(from, to)
-
-# gene_module <- setNames(tf_modules$module, tf_modules$gene)
-# 
-# #TODO fix: remove max hops
-# for (i in seq_len(10)) {
-#   unresolved <- target_edges$to[!(target_edges$to %in% names(gene_module))]
-#   if (length(unresolved) == 0) break
-#   newly_resolved <- target_edges %>%
-#     filter(to %in% unresolved, from %in% names(gene_module)) %>%
-#     mutate(module = gene_module[from])
-#   if (nrow(newly_resolved) == 0) break
-#   gene_module <- c(gene_module, setNames(newly_resolved$module, newly_resolved$to))
-# }
-
-#hk_genes <- feature_info$feature_id[grepl("^HK", feature_info$feature_id)]
-#gene_module <- c(gene_module, setNames(rep("HK", length(hk_genes)), hk_genes))
-
-feature_net <- sim[["model"]][["feature_network"]]
 
 
 gene_module <- propagate_module_assignments(tf_modules, target_edges)

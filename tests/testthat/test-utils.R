@@ -91,21 +91,6 @@ test_that("get_model_scores loads scPrisma/oscope results (CSV) and returns NULL
   expect_null(get_model_scores("scPrisma", d, "no_such_file"))
 })
 
-test_that("get_model_scores appends the run_id suffix to the results filename only", {
-  d <- tempfile()
-  dir.create(file.path(d, "scPrisma"), recursive = TRUE)
-  on.exit(unlink(d, recursive = TRUE))
-
-  write.csv(data.frame(symbol = "a", score = 1),
-            file.path(d, "scPrisma", "myfile_r3.csv"), row.names = FALSE)
-
-  # Without run_id, the r3-suffixed file shouldn't be found
-  expect_null(get_model_scores("scPrisma", d, "myfile"))
-  # With run_id = 3, it should be
-  result <- get_model_scores("scPrisma", d, "myfile", run_id = 3)
-  expect_equal(result$score, 1)
-})
-
 test_that("load_model_scores loads cyclum results from explicit results_dir/gene_expr_file", {
   # myc/nfkb-style layout: results live under a `results/<algorithm>` tree that's
   # separate from where the expression .h5 lives.

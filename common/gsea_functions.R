@@ -58,6 +58,16 @@ plot_nes_barplot <- function(df, figures_dir, fname, file_suffix, x_label = "Pat
   invisible(p_nes)
 }
 
+#' Build the Hallmark (H) MSigDB gene-set table used as GSEA's TERM2GENE input
+#'
+#' @param species Character, either "Homo sapiens" or "Mus musculus"
+#' @return Data frame with gs_name/entrez_gene columns
+build_hallmark_geneset <- function(species) {
+  msigdbr(species = species, category = "H") %>%
+    dplyr::select(gs_name, entrez_gene) %>%
+    mutate(entrez_gene = as.character(entrez_gene))
+}
+
 #' Run Hallmark GSEA
 #'
 #' @param geneList Named numeric vector of gene scores (names = ENTREZ IDs)
@@ -65,14 +75,12 @@ plot_nes_barplot <- function(df, figures_dir, fname, file_suffix, x_label = "Pat
 #' @param figures_dir Directory to save output figures
 #' @param fname File name prefix for saved figures
 #' @param algorithm Algorithm name for plot titles
+#' @param hallmark Optional table from build_hallmark_geneset() (default NULL: builds it here)
 #' @return GSEA results data frame
-run_hallmark_gsea <- function(geneList, species, figures_dir, fname, algorithm) {
-  
-  # Load Hallmark gene sets
-  hallmark <- msigdbr(species = species, category = "H") %>%
-    dplyr::select(gs_name, entrez_gene) %>%
-    mutate(entrez_gene = as.character(entrez_gene))
-  
+run_hallmark_gsea <- function(geneList, species, figures_dir, fname, algorithm, hallmark = NULL) {
+
+  if (is.null(hallmark)) hallmark <- build_hallmark_geneset(species)
+
   cat("Hallmark gene sets loaded:", length(unique(hallmark$gs_name)), "\n")
   
   cat("\n=== Running Hallmark GSEA ===\n")
@@ -145,17 +153,13 @@ run_go_gsea <- function(geneList, org_db, figures_dir, fname) {
   go_bp_df
 }
 
-#' Run DoRothEA GSEA
+#' Build the DoRothEA regulon TERM2GENE table (confidence A/B, ENTREZID-mapped)
 #'
-#' @param geneList Named numeric vector of gene scores (names = ENTREZ IDs)
 #' @param species Character, either "human" or "mouse"
-#' @param org_db OrgDb object (e.g., org.Hs.eg.db or org.Mm.eg.db)
-#' @param figures_dir Directory to save output figures
-#' @param fname File name prefix for saved figures
-#' @return GSEA results data frame
-run_dorothea_gsea <- function(geneList, species, org_db, figures_dir, fname) {
-  
-  # Load appropriate DoRothEA dataset
+#' @param org_db OrgDb object (e.g., org.Hs.eg.db or org.Mm.eg.db), used for the
+#'   SYMBOL -> ENTREZID mapping
+#' @return Data frame with Geneset (TF symbol) / ENTREZID columns
+build_dorothea_term2gene <- function(species, org_db) {
   if (species == "human") {
     data(dorothea_hs, package = "dorothea")
     dorothea_data <- dorothea_hs
@@ -165,20 +169,34 @@ run_dorothea_gsea <- function(geneList, species, org_db, figures_dir, fname) {
   } else {
     stop("Species must be 'human' or 'mouse'")
   }
-  
+
   target_list <- dorothea_data %>%
     filter(confidence %in% c("A", "B")) %>%
     dplyr::select(tf, target) %>%
     dplyr::rename(Geneset = tf, SYMBOL = target)
-  
+
   dorothea_entrez_map <- bitr(target_list$SYMBOL,
                               fromType = "SYMBOL",
                               toType   = "ENTREZID",
                               OrgDb    = org_db)
-  
-  dorothea_term2gene <- merge(target_list, dorothea_entrez_map, by = "SYMBOL") %>%
+
+  merge(target_list, dorothea_entrez_map, by = "SYMBOL") %>%
     dplyr::select(Geneset, ENTREZID)
-  
+}
+
+#' Run DoRothEA GSEA
+#'
+#' @param geneList Named numeric vector of gene scores (names = ENTREZ IDs)
+#' @param species Character, either "human" or "mouse"
+#' @param org_db OrgDb object (e.g., org.Hs.eg.db or org.Mm.eg.db)
+#' @param figures_dir Directory to save output figures
+#' @param fname File name prefix for saved figures
+#' @param dorothea_term2gene Optional table from build_dorothea_term2gene() (default NULL: builds it here)
+#' @return GSEA results data frame
+run_dorothea_gsea <- function(geneList, species, org_db, figures_dir, fname, dorothea_term2gene = NULL) {
+
+  if (is.null(dorothea_term2gene)) dorothea_term2gene <- build_dorothea_term2gene(species, org_db)
+
   cat("DoRothEA regulons loaded:", length(unique(dorothea_term2gene$Geneset)), "TFs\n")
   
   cat("\n=== Running DoRothEA GSEA ===\n")
@@ -462,10 +480,13 @@ resolve_org_db <- function(species) {
 #' @param run_go Logical, whether to run the (slower) GO Biological Process GSEA (default TRUE)
 #' @param run_tfea Logical, whether to run TFEA.ChIP (default TRUE)
 #' @param tf_filter Optional character vector of TF names to test in TFEA.ChIP (NULL = all)
+#' @param hallmark Optional table from build_hallmark_geneset() (default NULL: builds it here)
+#' @param dorothea_term2gene Optional table from build_dorothea_term2gene() (default NULL: builds it here)
 #' @return Named list with elements hallmark, go, dorothea, tfea - each a results data
 #'   frame (go/tfea are NULL if skipped)
 run_pathway_analyses <- function(geneList, species, figures_dir, fname, algorithm,
-                                  run_go = TRUE, run_tfea = TRUE, tf_filter = NULL) {
+                                  run_go = TRUE, run_tfea = TRUE, tf_filter = NULL,
+                                  hallmark = NULL, dorothea_term2gene = NULL) {
 
   org_db <- resolve_org_db(species)
   msigdbr_species <- if (species == "human") "Homo sapiens" else "Mus musculus"
@@ -473,7 +494,8 @@ run_pathway_analyses <- function(geneList, species, figures_dir, fname, algorith
   if (!dir.exists(figures_dir)) dir.create(figures_dir, recursive = TRUE)
 
   hallmark_df <- run_hallmark_gsea(geneList, species = msigdbr_species,
-                                    figures_dir = figures_dir, fname = fname, algorithm = algorithm)
+                                    figures_dir = figures_dir, fname = fname, algorithm = algorithm,
+                                    hallmark = hallmark)
 
   go_results <- if (run_go) {
     run_go_gsea(geneList, org_db = org_db, figures_dir = figures_dir, fname = fname)
@@ -482,7 +504,8 @@ run_pathway_analyses <- function(geneList, species, figures_dir, fname, algorith
   }
 
   dorothea_df <- run_dorothea_gsea(geneList, species = species, org_db = org_db,
-                                    figures_dir = figures_dir, fname = fname)
+                                    figures_dir = figures_dir, fname = fname,
+                                    dorothea_term2gene = dorothea_term2gene)
 
   tfea_df <- if (run_tfea) {
     run_tfea_chip(geneList, figures_dir = figures_dir, fname = fname,

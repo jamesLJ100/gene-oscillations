@@ -1,7 +1,5 @@
 #!/bin/bash
-# Runs the full myc (HCT116 MYC oscillations) pipeline end-to-end: preprocessing
-# (auto-downloading the raw GEO data if missing), then Cyclum and scPrisma, then
-# evaluation.
+# Runs the myc (HCT116) pipeline end-to-end.
 #
 # Each step runs as its own `Rscript` process rather than being sourced inside one
 # long-lived R session. This matters specifically for Cyclum/scPrisma: reticulate
