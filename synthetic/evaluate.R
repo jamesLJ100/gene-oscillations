@@ -81,10 +81,19 @@ for (combo_i in seq_len(nrow(combos))) {
 
     # dyngen's own simulated per-gene kinetics, for the mispredicted-gene analysis
     # near the end of this script (are algorithms more likely to miss genes with
-    # certain production/degradation rates?).
+    # certain production/degradation rates?). mean_expression (raw UMI, this file's
+    # actual simulated counts - not a kinetics parameter) is included alongside it to
+    # separate a true decay-rate effect from a confound where low decay -> higher
+    # steady-state abundance -> better signal-to-noise -> easier to (mis)detect.
+    mean_expr_df <- data.frame(
+      symbol          = rownames(sim$counts),
+      mean_expression = rowMeans(sim$counts),
+      stringsAsFactors = FALSE
+    )
     kinetics_df <- sim$model$feature_info %>%
       dplyr::select(symbol = feature_id, transcription_rate, translation_rate,
-                     mrna_decay_rate, protein_decay_rate)
+                     mrna_decay_rate, protein_decay_rate) %>%
+      merge(mean_expr_df, by = "symbol", all.x = TRUE)
 
     # Now process each algorithm for this file
     for (algorithm in algorithms) {
@@ -282,38 +291,41 @@ gene_level_df$outcome <- dplyr::case_when(
 )
 gene_level_df$outcome <- factor(gene_level_df$outcome, levels = c("TP", "FN", "TN", "FP"))
 
-rate_params <- list(
+kinetics_vars <- list(
   list(col = "transcription_rate", label = "Transcription rate"),
   list(col = "translation_rate",   label = "Translation rate"),
   list(col = "mrna_decay_rate",    label = "mRNA decay rate"),
-  list(col = "protein_decay_rate", label = "Protein decay rate")
+  list(col = "protein_decay_rate", label = "Protein decay rate"),
+  list(col = "mean_expression",    label = "Mean expression (raw UMI)")
 )
 
-# Wilcoxon rank-sum test per (algorithm, rate): does this rate differ between
-# correctly- and incorrectly-classified genes, among the genes that share the
-# same ground-truth label (TP vs FN among true positives, TN vs FP among true
-# negatives)?
+# Wilcoxon rank-sum test per (algorithm, variable): does this variable differ
+# between correctly- and incorrectly-classified genes, among the genes that share
+# the same ground-truth label (TP vs FN among true positives, TN vs FP among true
+# negatives)? mean_expression is included alongside the kinetics rates so an
+# apparent rate effect can be checked against a simpler abundance/signal-to-noise
+# explanation (see the mean_expr_df comment above).
 kinetics_tests <- do.call(rbind, lapply(algorithms, function(algo) {
   algo_df <- gene_level_df %>% dplyr::filter(algorithm == algo)
-  do.call(rbind, lapply(rate_params, function(rp) {
-    tp <- algo_df[[rp$col]][algo_df$outcome == "TP"]
-    fn <- algo_df[[rp$col]][algo_df$outcome == "FN"]
-    tn <- algo_df[[rp$col]][algo_df$outcome == "TN"]
-    fp <- algo_df[[rp$col]][algo_df$outcome == "FP"]
+  do.call(rbind, lapply(kinetics_vars, function(kv) {
+    tp <- algo_df[[kv$col]][algo_df$outcome == "TP"]
+    fn <- algo_df[[kv$col]][algo_df$outcome == "FN"]
+    tn <- algo_df[[kv$col]][algo_df$outcome == "TN"]
+    fp <- algo_df[[kv$col]][algo_df$outcome == "FP"]
     p_tp_fn <- tryCatch(wilcox.test(tp, fn)$p.value, error = function(e) NA_real_)
     p_tn_fp <- tryCatch(wilcox.test(tn, fp)$p.value, error = function(e) NA_real_)
-    data.frame(algorithm = algo, rate = rp$label,
+    data.frame(algorithm = algo, variable = kv$label,
                p_TP_vs_FN = p_tp_fn, n_TP = length(tp), n_FN = length(fn),
                p_TN_vs_FP = p_tn_fp, n_TN = length(tn), n_FP = length(fp))
   }))
 }))
-cat("\nKinetics: rate differences between correctly- and incorrectly-classified genes\n")
-cat("(Wilcoxon rank-sum p-values; small p means that rate differs by outcome)\n")
+cat("\nKinetics: variable differences between correctly- and incorrectly-classified genes\n")
+cat("(Wilcoxon rank-sum p-values; small p means that variable differs by outcome)\n")
 print(kinetics_tests)
 write.csv(kinetics_tests, file.path(fig_dir, "kinetics_test_pvalues.csv"), row.names = FALSE)
 
-make_kinetics_plot <- function(df, rate_col, y_lab) {
-  ggplot(df, aes(x = outcome, y = .data[[rate_col]], fill = outcome)) +
+make_kinetics_plot <- function(df, var_col, y_lab) {
+  ggplot(df, aes(x = outcome, y = .data[[var_col]], fill = outcome)) +
     geom_boxplot(outlier.size = 0.5) +
     facet_wrap(~algorithm) +
     scale_y_log10() +
@@ -323,9 +335,9 @@ make_kinetics_plot <- function(df, rate_col, y_lab) {
     theme(legend.position = "none")
 }
 
-for (rp in rate_params) {
-  p <- make_kinetics_plot(gene_level_df, rp$col, rp$label)
-  ggsave(file.path(fig_dir, sprintf("kinetics_%s.pdf", rp$col)), p, width = 8, height = 5, dpi = 150)
+for (kv in kinetics_vars) {
+  p <- make_kinetics_plot(gene_level_df, kv$col, kv$label)
+  ggsave(file.path(fig_dir, sprintf("kinetics_%s.pdf", kv$col)), p, width = 8, height = 5, dpi = 150)
 }
 
 cat("Saved kinetics analysis (plots + p-values) to", fig_dir, "\n")
