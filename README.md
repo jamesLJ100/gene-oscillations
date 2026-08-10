@@ -368,6 +368,14 @@ source("segmentation_clock/analyse.R")
 Results are written to `segmentation_clock/results/cyclum/` and
 `segmentation_clock/results/scPrisma/`.
 
+`analyse.R` compares predicted cycling scores against three reference gene lists
+(`segmentation_clock/data/{oscillating,housekeeping,cellcycle}_{mouse,human}.rds`), sourced from:
+- **oscillating** — [Matsuda et al. 2020](https://www.nature.com/articles/s41586-020-2144-9)
+  (Nature), the HES7-luciferase hIPSC segmentation clock paper this pipeline models
+- **housekeeping** — [Eisenberg & Levanon 2013](https://www.cell.com/trends/genetics/fulltext/S0168-9525(13)00089-9)
+  (Trends in Genetics)
+- **cellcycle** — [Xue et al. 2020](https://www.nature.com/articles/s41586-019-1884-x) (Nature)
+
 Or run every step above (plus evaluation) in one go with `./segmentation_clock/run_pipeline.sh`.
 
 ## Running the MYC oscillations (HCT116) pipeline

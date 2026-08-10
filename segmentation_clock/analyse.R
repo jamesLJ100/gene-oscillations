@@ -72,6 +72,12 @@ dataset_configs <- list(
   )
 )
 
+# Sources for the reference gene lists below:
+#   oscillating  - Matsuda et al. 2020 (Nature, s41586-020-2144-9), the HES7-luciferase
+#                  hIPSC segmentation clock paper this pipeline models - Supplementary
+#                  Table 2 (human) / Table 4 (mouse)
+#   housekeeping - Eisenberg & Levanon 2013 (Trends in Genetics, S0168-9525(13)00089-9)
+#   cellcycle    - Xue et al. 2020 (Nature, s41586-019-1884-x), G0/G1S/S/G2M/M/MG1 signatures
 reference_lists <- list(
   mouse = list(
     oscillating  = readRDS("segmentation_clock/data/oscillating_mouse.rds"),
