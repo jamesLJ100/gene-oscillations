@@ -1,14 +1,15 @@
 rm(list=ls())
+
 library(data.table)
 library(Matrix)
 library(rhdf5)
-library(cluster)
 library(ggplot2)
 library(patchwork)
 
 proj_root <- here::here()
 setwd(proj_root)
 source(file.path(proj_root, "common/hdfrw.R"))
+source(file.path(proj_root, "common/cell_purity_filter.R"))
 
 geo_files <- file.path(proj_root, "segmentation_clock/data/GSE114186", c(
   "GSE114186_mmE95_CellData.csv.gz", "GSE114186_mmE95_GeneData.csv.gz", "GSE114186_mmE95_X.csv.gz"
@@ -60,29 +61,37 @@ rownames(X_raw) <- rownames(celldata)
 colnames(X_raw) <- rownames(genedata)
 
 # --- Subset to Stage 1 clusters ---
+# Needed only to resolve original_cell_indices.txt's 0-based row positions to actual cell
+# identities (rownames) - those positions are into this Stage-1-subsetted ordering, not the
+# raw celldata (see the comment on spring_files above).
 stage1_clusters <- c('aNTB1','aNTB2','pNTB','NMP','pPSM','aPSM','SOM')
 stage1_flag  <- celldata$leiden %in% stage1_clusters
 X_sub        <- X_raw[stage1_flag, ]
-celldata_sub <- celldata[stage1_flag, ]
 
 stopifnot("SPRING indices exceed stage1 subset" = max(indices) < nrow(X_sub))
 
-# --- Select PM cells using 0-based SPRING indices ---
-X_pm    <- X_sub[indices + 1, ]
-meta_pm <- celldata_sub[indices + 1, ]
+pm_subplot_ids <- rownames(X_sub)[indices + 1]
 
-meta_pm$cluster    <- labels_mat$louvain
+# --- Build the "mme95 PM subplot" population directly from the authors' own SPRING export ---
+# cell_groupings.csv's `louvain` row already IS the authors' final cluster assignment for
+# these cells (aPSM/dmSOM/MPC/NMP/pPSM/scSOM), exported from their own Louvain run on the
+# broader Neural+PSM subset - https://kleintools.hms.harvard.edu/tools/springViewer_1_6_dev.html?datasets/Diaz2019/E95PM/full.
+# There's no need to re-derive a clustering ourselves (an earlier version of this script did,
+# and it neither matched their cluster count nor could be mapped back to their cluster names -
+# Louvain cluster IDs/counts aren't stable across reruns or population scope). Using their
+# labels directly is both simpler and exactly reproduces their grouping.
+X_pm    <- X_sub[pm_subplot_ids, ]
+meta_pm <- celldata[pm_subplot_ids, ]
+
 meta_pm$library_id <- labels_mat$library_id
+meta_pm$cluster    <- labels_mat$louvain
 
 cat("Dimensions of PM count matrix:", dim(X_pm), "\n")
-cat("\nCluster counts:\n")
+cat("Cluster counts (from the authors' own SPRING export):\n")
 print(table(meta_pm$cluster))
 
 # --- Cell QC: drop low-count cells and cells with high mitochondrial fraction ---
-# Per the Cyclum paper's recommendation for droplet data. The `original_cell_indices.txt`
-# selection above is a biological/trajectory gate (SPRING lasso selection along the PM
-# trajectory), not a numerical QC step, so this is not assumed to be redundant — thresholds
-# below are standard conventions; check the printed diagnostics and adjust if needed.
+# Per the Cyclum paper's recommendation for droplet data.
 MIN_COUNTS    <- 1000
 MAX_MITO_FRAC <- 0.10
 
@@ -102,9 +111,6 @@ cat(sprintf(
 
 X_pm    <- X_pm[qc_flag, ]
 meta_pm <- meta_pm[qc_flag, ]
-
-cat("\nCluster counts after QC:\n")
-print(table(meta_pm$cluster))
 
 # --- Save raw UMI counts (cells x genes -> genes x cells) ---
 # This is inDrops (droplet/UMI) data (GSM3137206), and per the Cyclum paper's methods, droplet
@@ -140,77 +146,42 @@ save_cluster_counts <- function(X, meta, out_dir) {
 
 save_cluster_counts(X_pm, meta_pm, "segmentation_clock/data/mme95/counts/raw")
 
-# --- Silhouette-based cell QC: drop cells that don't cleanly fit their assigned cluster ---
-# Standard practice: log-normalize, select highly variable genes, PCA, then compute per-cell
-# silhouette width (Rousseeuw 1987) from the assigned cluster labels. silhouette in [-1, 1]:
-# near +1 = cleanly fits its own cluster, near 0 = borderline between two clusters, negative =
-# on average closer to a different cluster than its own (likely mis-clustered). This is separate
-# from the raw output above — both are kept so nothing already computed is lost.
-# N_PCS=20 and the HVG method below match the source paper's stated methods (mouse E9.5 PSM
-# neighbour graph: 20 PCA dimensions; HVGs: top 2,000 by a bin-normalized overdispersion metric,
-# not raw variance — raw variance is biased toward highly-expressed genes).
-N_HVG   <- 2000
-N_PCS   <- 20
-N_BINS  <- 20
-SIL_MIN <- 0
+# --- Neighbor-label-purity cell QC: drop cells that sit ambiguously between clusters ---
+# See common/cell_purity_filter.R for the method (k-NN label agreement, computed directly on
+# scaled HVG expression - not a PCA/tSNE/UMAP/force-atlas projection - so the result doesn't
+# depend on a choice of dimensionality-reduction method or number of components).
+K_NEIGHBORS <- 20L
+PURITY_MIN  <- 0.7   # keep cells whose neighbours agree with their own label >= 70% of the time
 
-cpm    <- X_pm / rowSums(X_pm) * 1e6   # per-cell (row-wise) normalisation
-logcpm <- log1p(cpm)
+purity_result <- neighbor_purity_filter(X_pm, meta_pm, k_neighbors = K_NEIGHBORS, purity_min = PURITY_MIN)
+meta_pm     <- purity_result$meta
+purity_flag <- meta_pm$kept
 
-select_hvg_dispersion <- function(logcpm, n_top, n_bins) {
-  gene_mean  <- colMeans(logcpm)
-  gene_var   <- colMeans(logcpm^2) - gene_mean^2
-  dispersion <- ifelse(gene_mean > 0, gene_var / gene_mean, 0)
-  log_disp   <- log1p(dispersion)
+save_cluster_counts(X_pm[purity_flag, ], meta_pm[purity_flag, ], "segmentation_clock/data/mme95/counts/purity_filtered")
 
-  bins <- cut(gene_mean, breaks = n_bins, labels = FALSE)
-  norm_disp <- ave(log_disp, bins, FUN = function(x) {
-    s <- sd(x)
-    if (is.na(s) || s == 0) return(rep(0, length(x)))
-    (x - mean(x)) / s
-  })
+# Save per-cell cluster/purity/kept results (keyed by rowname = cell identity) so
+# plot_mme95_knn_graph.R can overlay them on the paper's own graph layout without
+# recomputing QC/purity itself.
+saveRDS(meta_pm, "segmentation_clock/data/mme95/counts/purity_filter_results.rds")
 
-  order(norm_disp, decreasing = TRUE)[seq_len(n_top)]
-}
+# --- PCA plot: clusters before/after neighbor-purity filtering ---
+# For visualization only - a 2D projection of the same scaled HVG expression the purity filter
+# was computed from. The filtering decision above doesn't depend on this projection.
+pca_embedding <- prcomp(purity_result$scaled_expr)$x[, 1:2]
 
-hvg <- select_hvg_dispersion(logcpm, N_HVG, N_BINS)
-
-pca        <- prcomp(logcpm[, hvg], center = TRUE, scale. = TRUE, rank. = N_PCS)
-cell_dist  <- dist(pca$x)
-sil        <- silhouette(as.integer(factor(meta_pm$cluster)), cell_dist)
-meta_pm$silhouette <- sil[, "sil_width"]
-
-cat("\nSilhouette width summary (all clusters):\n")
-print(summary(meta_pm$silhouette))
-cat("\nSilhouette width by cluster:\n")
-print(aggregate(silhouette ~ cluster, data = meta_pm, FUN = function(x) round(summary(x), 3)))
-
-sil_flag <- meta_pm$silhouette >= SIL_MIN
-cat(sprintf(
-  "\nSilhouette filter (>= %.2f): keeping %d / %d cells\n",
-  SIL_MIN, sum(sil_flag), length(sil_flag)
-))
-cat("Cluster counts after silhouette filter:\n")
-print(table(meta_pm$cluster[sil_flag]))
-
-save_cluster_counts(X_pm[sil_flag, ], meta_pm[sil_flag, ], "segmentation_clock/data/mme95/counts/silhouette")
-
-# --- PCA plot: clusters before/after silhouette filtering ---
-# Uses the exact same PCA embedding (pca$x) computed above for the silhouette scores, so this
-# shows cluster separation/removed cells in the same space the filtering decision was made in.
 figures_dir <- file.path(proj_root, "segmentation_clock/figures")
 if (!dir.exists(figures_dir)) dir.create(figures_dir, recursive = TRUE)
 
 plot_df <- data.frame(
-  PC1     = pca$x[, 1],
-  PC2     = pca$x[, 2],
+  PC1     = pca_embedding[, 1],
+  PC2     = pca_embedding[, 2],
   cluster = factor(meta_pm$cluster),
-  kept    = sil_flag
+  kept    = purity_flag
 )
 
 p_before <- ggplot(plot_df, aes(PC1, PC2, color = cluster)) +
   geom_point(size = 1, alpha = 0.8) +
-  labs(title = "Before silhouette filtering", color = "Cluster") +
+  labs(title = "Before neighbor-purity filtering", color = "Cluster") +
   theme_bw(base_size = 12)
 
 plot_df$status <- factor(
@@ -225,9 +196,9 @@ status_colors <- setNames(
 p_after <- ggplot(plot_df, aes(PC1, PC2, color = status)) +
   geom_point(size = 1, alpha = 0.8) +
   scale_color_manual(values = status_colors) +
-  labs(title = "After silhouette filtering (grey = removed)", color = "") +
+  labs(title = "After neighbor-purity filtering (grey = removed)", color = "") +
   theme_bw(base_size = 12)
 
 pca_plot <- p_before + p_after
-ggsave(file.path(figures_dir, "pca_silhouette_filtering.pdf"), pca_plot, width = 12, height = 5, dpi = 300)
-cat("\nSaved PCA before/after filtering plot to:", file.path(figures_dir, "pca_silhouette_filtering.pdf"), "\n")
+ggsave(file.path(figures_dir, "pca_purity_filtering.pdf"), pca_plot, width = 12, height = 5, dpi = 300)
+cat("\nSaved PCA before/after filtering plot to:", file.path(figures_dir, "pca_purity_filtering.pdf"), "\n")

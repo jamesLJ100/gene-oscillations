@@ -12,7 +12,7 @@ import sklearn as skl
 import h5py
 import random
 import tensorflow as tf
-import argparse
+import argparsey
 
 random.seed(42)
 np.random.seed(42)
@@ -27,15 +27,7 @@ if platform.system() == "Darwin":
 
 MAX_LINEAR_DIMS = 5
 
-def process_data_file(file_path, output_dir, encoder_width, epochs, learning_rate, skip_if_exists=False):
-    fullflname = os.path.basename(file_path)
-    fname, ext = os.path.splitext(fullflname)
-    output_path = os.path.join(output_dir, f'{fname}.h5')
-
-    if skip_if_exists and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-        print(f"Skipping {fname}: output already exists at {output_path}")
-        return {"file": fname, "runtime_seconds": float("nan")}
-
+def process_data_file(file_path, output_dir, encoder_width, epochs, learning_rate, run_number):
     print(f"Processing file: {file_path}")
     print(f"Parameters: encoder_width={encoder_width}, epochs={epochs}, learning_rate={learning_rate}")
 
@@ -43,7 +35,7 @@ def process_data_file(file_path, output_dir, encoder_width, epochs, learning_rat
     # paper's methods, droplet/UMI data should be "read counts normalized and log2
     # transformed"
     df = hdf2mat(file_path)
-    print(f"Matrix shape: {df.shape}")  # N.B. cells should be rows
+    print(f"Matrix shape: {df.shape}")
     print(f"First few row names: {df.index[:5].tolist()}")
     print(f"First few col names: {df.columns[:5].tolist()}")
     print(df.head())
@@ -70,14 +62,19 @@ def process_data_file(file_path, output_dir, encoder_width, epochs, learning_rat
     model.train(df.values, epochs=epochs, rate=learning_rate)
     
     elapsed = time.time() - start_time
-
+    
+    fullflname = os.path.basename(file_path)
+    fname, ext = os.path.splitext(fullflname)
     os.makedirs(output_dir, exist_ok=True)
+    
+    if run_number is not None:
+        run_number_str = f"_r{run_number}"
+        output_path = os.path.join(output_dir, f'{fname}{run_number_str}.h5')
+    else:
+        output_path = os.path.join(output_dir, f'{fname}.h5')
+    
 
-    # Write to a temp path, then rename (atomic on POSIX) into place - avoids a
-    # truncated file at output_path if the process is killed mid-write.
-    tmp_path = output_path + ".tmp"
-    mat2hdf(model.get_weight(), tmp_path)
-    os.replace(tmp_path, output_path)
+    mat2hdf(model.get_weight(), output_path)
     print(f"Model weights saved to: {output_path}")
     print(f"Runtime: {elapsed:.2f}s")
     
@@ -103,11 +100,9 @@ Examples:
                         help='Number of training epochs (default: 500)')
     parser.add_argument('--learning_rate', type=float, default=2e-4,
                         help='Learning rate (default: 2e-4)')
-    parser.add_argument('--skip_if_exists', action='store_true',
-                        help='Skip files whose output already exists (for resuming an '
-                             'interrupted run) - do not use for grid search, which must '
-                             'always recompute')
-
+    parser.add_argument('--run_number', type=int, default=None,
+                        help='=Run Number')
+    
     args = parser.parse_args()
     
     input_dir_abs = os.path.abspath(args.input_dir)
@@ -137,8 +132,7 @@ Examples:
     
     for idx, file_path in enumerate(data_files, 1):
         print(f"\nProcessing file {idx}/{len(data_files)}: {os.path.basename(file_path)}")
-        record = process_data_file(file_path, output_dir, args.encoder_width, args.epochs, args.learning_rate,
-                                    skip_if_exists=args.skip_if_exists)
+        record = process_data_file(file_path, output_dir, args.encoder_width, args.epochs, args.learning_rate, args.run_number)
         timing_records.append(record)
 
     timing_df = pd.DataFrame(timing_records)

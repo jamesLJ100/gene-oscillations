@@ -15,7 +15,7 @@ library(dorothea)
 library(TFEA.ChIP)
 library(GenomicRanges)
 
-register(SerialParam())  # force single threaded - otherwise fgsea hangs...windows things
+register(SerialParam())
 
 proj_root <- here::here()
 setwd(proj_root)
@@ -39,7 +39,7 @@ algo_display <- c(cyclum = "Cyclum", scPrisma = "scPrisma")
 dataset_configs <- list(
   mme95 = list(
     label         = "mmE9.5 PM",
-    counts_dir    = file.path(proj_root, "segmentation_clock/data/mme95/counts/silhouette"),
+    counts_dir    = file.path(proj_root, "segmentation_clock/data/mme95/counts/purity_filtered"),
     cyclum_dir    = file.path(proj_root, "segmentation_clock/results/cyclum/mme95"),
     scPrisma_dir  = file.path(proj_root, "segmentation_clock/results/scPrisma/mme95"),
     figures_dir   = file.path(proj_root, "segmentation_clock/figures/mme95"),
@@ -50,7 +50,7 @@ dataset_configs <- list(
   ),
   mESC = list(
     label         = "mESC",
-    counts_dir    = file.path(proj_root, "segmentation_clock/data/mmESC/counts/raw"),
+    counts_dir    = file.path(proj_root, "segmentation_clock/data/mmESC/counts/purity_filtered"),
     cyclum_dir    = file.path(proj_root, "segmentation_clock/results/cyclum/mESC"),
     scPrisma_dir  = file.path(proj_root, "segmentation_clock/results/scPrisma/mESC"),
     figures_dir   = file.path(proj_root, "segmentation_clock/figures/mESC"),
@@ -61,7 +61,7 @@ dataset_configs <- list(
   ),
   hIPSC = list(
     label         = "hIPSC",
-    counts_dir    = file.path(proj_root, "segmentation_clock/data/hIPSC/counts/raw"),
+    counts_dir    = file.path(proj_root, "segmentation_clock/data/hIPSC/counts/purity_filtered"),
     cyclum_dir    = file.path(proj_root, "segmentation_clock/results/cyclum/hIPSC"),
     scPrisma_dir  = file.path(proj_root, "segmentation_clock/results/scPrisma/hIPSC"),
     figures_dir   = file.path(proj_root, "segmentation_clock/figures/hIPSC"),
@@ -72,12 +72,6 @@ dataset_configs <- list(
   )
 )
 
-# Sources for the reference gene lists below:
-#   oscillating  - Matsuda et al. 2020 (Nature, s41586-020-2144-9), the HES7-luciferase
-#                  hIPSC segmentation clock paper this pipeline models - Supplementary
-#                  Table 2 (human) / Table 4 (mouse)
-#   housekeeping - Eisenberg & Levanon 2013 (Trends in Genetics, S0168-9525(13)00089-9)
-#   cellcycle    - Xue et al. 2020 (Nature, s41586-019-1884-x), G0/G1S/S/G2M/M/MG1 signatures
 reference_lists <- list(
   mouse = list(
     oscillating  = readRDS("segmentation_clock/data/oscillating_mouse.rds"),
@@ -421,8 +415,10 @@ run_evaluation <- function(algorithm, config, refs) {
   }
 
   # --- Plot 4: ref_cluster cells only, gene expression percentile distribution ---
-  # Target list is mouse gene symbols, but matching is case-insensitive so it also
-  # finds human orthologs (e.g. HES7 in hIPSC data).
+  # Rank genes by cycling score and highlight the segmentation-clock targets,
+  # annotating each with the percentile it falls at. Target list is mouse gene
+  # symbols, but matching is case-insensitive so it also finds human orthologs
+  # (e.g. HES7 in hIPSC data).
   target_genes <- c("Hes7", "Hes1", "Dll1", "Dkk1", "Lfng", "Axin2")
   p4 <- NULL
 

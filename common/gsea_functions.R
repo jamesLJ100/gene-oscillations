@@ -91,9 +91,15 @@ run_hallmark_gsea <- function(geneList, species, figures_dir, fname, algorithm, 
                         verbose       = TRUE,
                         eps           = 1e-10,
                         scoreType     = "pos")
-  
-  gsea_results_df <- as.data.frame(gsea_hallmark) %>%
-    filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
+
+  # GSEA() returns NULL (not an empty result object) when nothing passes the
+  # cutoff, so as.data.frame() on it has no columns at all -- guard before filter().
+  gsea_results_df <- if (is.null(gsea_hallmark)) {
+    data.frame()
+  } else {
+    as.data.frame(gsea_hallmark) %>%
+      filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
+  }
   cat("Significant hallmark terms found:", nrow(gsea_results_df), "\n")
   
   if (nrow(gsea_results_df) > 0) {
@@ -135,8 +141,14 @@ run_go_gsea <- function(geneList, org_db, figures_dir, fname) {
                       eps           = 1e-10,
                       scoreType     = "pos")
 
-  go_bp_df <- as.data.frame(gsea_go_bp) %>%
-    filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
+  # gseGO() returns NULL (not an empty result object) when nothing passes the
+  # cutoff, so as.data.frame() on it has no columns at all -- guard before filter().
+  go_bp_df <- if (is.null(gsea_go_bp)) {
+    data.frame()
+  } else {
+    as.data.frame(gsea_go_bp) %>%
+      filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
+  }
   cat("Significant GO BP terms found:", nrow(go_bp_df), "\n")
 
   if (nrow(go_bp_df) > 0) {
@@ -207,9 +219,15 @@ run_dorothea_gsea <- function(geneList, species, org_db, figures_dir, fname, dor
                         verbose       = TRUE,
                         eps           = 1e-10,
                         scoreType     = "pos")
-  
-  dorothea_df <- as.data.frame(gsea_dorothea) %>%
-    filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
+
+  # GSEA() returns NULL (not an empty result object) when nothing passes the
+  # cutoff, so as.data.frame() on it has no columns at all -- guard before filter().
+  dorothea_df <- if (is.null(gsea_dorothea)) {
+    data.frame()
+  } else {
+    as.data.frame(gsea_dorothea) %>%
+      filter(!is.na(ID), !is.na(NES)) %>% arrange(desc(NES))
+  }
   cat("Significant DoRothEA TFs found:", nrow(dorothea_df), "\n")
   
   if (nrow(dorothea_df) > 0) {

@@ -6,12 +6,13 @@ library(rhdf5)
 proj_root <- here::here()
 setwd(proj_root)
 source(file.path(proj_root, "common/hdfrw.R"))
+source(file.path(proj_root, "common/cell_purity_filter.R"))
 
 # ============================================================================
 # mESC preprocessing, mirroring preprocess_mme95.R's approach for the mmE9.5 PM data:
-# load raw GEO counts, attach Louvain cluster labels, QC-filter cells, save raw
-# UMI counts per cluster. Clustering/silhouette-based cell QC deliberately left
-# out for now (see preprocess_mme95.R for that step, once we want to add it here).
+# load raw GEO counts, attach Louvain cluster labels, QC-filter cells, apply the same
+# neighbor-purity cell filter as preprocess_mme95.R (see common/cell_purity_filter.R),
+# save raw UMI counts per cluster.
 #
 # Louvain clustering source: the "full" Diaz2019 mESC SPRING session —
 # https://kleintools.hms.harvard.edu/tools/springViewer_1_6_dev.html?datasets/Diaz2019/mESC/full
@@ -101,3 +102,13 @@ save_cluster_counts <- function(X, meta, out_dir) {
 }
 
 save_cluster_counts(X_pm, meta_pm, "segmentation_clock/data/mmESC/counts/raw")
+
+# --- Neighbor-label-purity cell QC: drop cells that sit ambiguously between clusters ---
+# See common/cell_purity_filter.R for the method (k-NN label agreement, computed directly on
+# scaled HVG expression - not a PCA/tSNE/UMAP/force-atlas projection - so the result doesn't
+# depend on a choice of dimensionality-reduction method or number of components).
+purity_result <- neighbor_purity_filter(X_pm, meta_pm, k_neighbors = 20L, purity_min = 0.7)
+meta_pm     <- purity_result$meta
+purity_flag <- meta_pm$kept
+
+save_cluster_counts(X_pm[purity_flag, ], meta_pm[purity_flag, ], "segmentation_clock/data/mmESC/counts/purity_filtered")

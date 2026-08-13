@@ -12,7 +12,7 @@ library(TFEA.ChIP)
 library(GenomicRanges)
 library(TxDb.Hsapiens.UCSC.hg19.knownGene)
 
-register(SerialParam())  # force single threaded - otherwise fgsea hangs...windows things
+register(SerialParam())
 proj_root <- here::here()
 setwd(proj_root)
 

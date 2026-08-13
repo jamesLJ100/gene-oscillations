@@ -53,13 +53,13 @@ process_mouse_type <- function(data, mouse_type) {
   
   cat("Cells after >=1500 feature filter:", ncol(seurat_obj), "\n")
   
-  # Calculate QC metrics and filter
-  
+  # 10% mito threshold: not from the paper (it doesn't specify one), matches the
+  # project-wide convention used elsewhere (segmentation_clock/, qc_cell_mask()).
   seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^mt-")
-  
+
   seurat_obj <- subset(
-    seurat_obj, 
-    subset = nFeature_RNA > 200 & percent.mt < 20
+    seurat_obj,
+    subset = percent.mt < 10
   )
   
   cat("Cells after QC filtering:", ncol(seurat_obj), "\n")

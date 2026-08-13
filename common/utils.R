@@ -28,22 +28,26 @@ get_cyclum_scores <- function(gene_expr_file, model_weights_file) {
   cyclum_df
 }
 
-# Results live under data_dir/algorithm/; the expression .h5 lives at
-# data_dir/input_file_name.h5. Used by synthetic/*_gs.R and evaluate*.R, where both
-# are nested under the same data_dir.
-get_model_scores <- function(algorithm, data_dir, input_file_name) {
+# Results live under data_dir/algorithm/, with a run_id suffix if given; the
+# expression .h5 lives at data_dir/input_file_name.h5. Used by synthetic/*_gs.R and
+# evaluate*.R, where both are nested under the same data_dir.
+get_model_scores <- function(algorithm, data_dir, input_file_name, run_id = NULL) {
+  input_file_name_with_run_id <- if (is.null(run_id)) {
+    input_file_name
+  } else {
+    paste0(input_file_name, "_r", run_id)
+  }
   load_model_scores(
     algorithm,
     results_dir     = file.path(data_dir, algorithm),
     gene_expr_file  = file.path(data_dir, paste0(input_file_name, ".h5")),
-    input_file_name = input_file_name
+    input_file_name = input_file_name_with_run_id
   )
 }
 
 # Same loading logic as get_model_scores(), but with results_dir/gene_expr_file passed
 # in directly rather than derived from a shared data_dir - for callers whose results and
-# expression files don't live in that data_dir/algorithm layout (myc/nfkb/
-# segmentation_clock's analyse.R, where results live in their own dataset/results/ tree).
+# expression files don't live in that data_dir/algorithm layout.
 load_model_scores <- function(algorithm, results_dir, gene_expr_file, input_file_name) {
   if (algorithm == "cyclum") {
     weight_file <- file.path(results_dir, paste0(input_file_name, ".h5"))

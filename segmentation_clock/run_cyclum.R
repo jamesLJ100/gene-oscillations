@@ -8,12 +8,11 @@ source(file.path(proj_root, "algorithms/run_cyclum.R"))
 
 use_condaenv("cyclum_env", required = TRUE)
 
-# mme95 uses the silhouette-filtered cells; mESC/hIPSC don't have a silhouette
-# step yet, so they use the raw (QC'd) counts directly.
+# All three datasets use the neighbor-purity-filtered cells (see common/cell_purity_filter.R).
 datasets <- list(
-  mme95 = file.path(proj_root, "segmentation_clock/data/mme95/counts/silhouette"),
-  mESC  = file.path(proj_root, "segmentation_clock/data/mmESC/counts/raw"),
-  hIPSC = file.path(proj_root, "segmentation_clock/data/hIPSC/counts/raw")
+  mme95 = file.path(proj_root, "segmentation_clock/data/mme95/counts/purity_filtered"),
+  mESC  = file.path(proj_root, "segmentation_clock/data/mmESC/counts/purity_filtered"),
+  hIPSC = file.path(proj_root, "segmentation_clock/data/hIPSC/counts/purity_filtered")
 )
 
 for (name in names(datasets)) {
