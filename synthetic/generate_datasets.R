@@ -8,11 +8,7 @@ generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE)
   model_config <- make_config(n_cells, n_genes)
 
   # Each (n_cells, n_genes) combination gets its own subdirectory, for both the
-  # tuning and evaluation sets. This isn't just organisational: run_cyclum.py/
-  # run_scPrisma.py each glob every .h5 file in whatever directory they're pointed
-  # at and apply one fixed hyperparameter setting to all of them in a single call -
-  # so combinations that need different (tuned) hyperparameters must be physically
-  # isolated in their own directory, not just distinguishable by filename.
+  # tuning and evaluation sets.
   combo_dir <- sprintf("c%dg%d", n_cells, n_genes)
   subdir <- if (is_tuning) {
     file.path("synthetic", "data", "dyngen", "gridsearch", combo_dir)
@@ -23,13 +19,9 @@ generate_datasets <- function(n_cells, n_genes, n_replicates, is_tuning = FALSE)
   error_log <- here::here(subdir, "generation_errors.log")
 
   for (i in seq_len(n_replicates)) {
-    # Requested dimensions, used to identify this dataset if run_simulation() itself
-    # fails (the actual simulated dimensions, used for the saved filename below, aren't
-    # known until it succeeds).
     fname_base <- sprintf("c%dg%d_%d", n_cells, n_genes, i)
 
-    # Skip already-generated replicates (resume support). Gene count in the filename
-    # is the actual simulated count, not the requested n_genes, hence the wildcard.
+    # Skip already-generated replicates
     h5_pattern  <- sprintf("^c%dg[0-9]+_%d\\.h5$", n_cells, i)
     existing_h5 <- list.files(here::here(subdir), pattern = h5_pattern)
 

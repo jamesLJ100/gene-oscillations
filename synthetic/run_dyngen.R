@@ -3,27 +3,23 @@ library(tidyverse)
 library(here)
 library(hdf5r)
 
-## define project root
 proj_root <- here::here()
 setwd(proj_root)
 
 source(file.path(proj_root, "common/hdfrw.R"))
 
-# Real gene regulatory network / real scRNA-seq count distribution used to ground each
-# simulation (rather than an arbitrary/unrealistic one). Not checked into the repo (data/ is
-# gitignored) - downloaded automatically here on first use, then cached locally.
 realnet_path   <- here::here("synthetic", "data", "realnet.rds")
 realcount_path <- here::here("synthetic", "data", "realcount.rds")
 
 if (!file.exists(realnet_path)) {
-  cat("Downloading realnet.rds (one-time)...\n")
+  cat("Downloading realnet.rds \n")
   download.file(
     "https://github.com/dynverse/dyngen/raw/data_files/regulatorycircuits_26_neuron-associated_cells_cancer.rds",
     destfile = realnet_path, mode = "wb"
   )
 }
 if (!file.exists(realcount_path)) {
-  cat("Downloading realcount.rds (one-time)...\n")
+  cat("Downloading realcount.rds \n")
   download.file(
     "https://github.com/dynverse/dyngen/raw/data_files/zenodo_1443566_real_gold_psc-astrocyte-maturation-neuron_sloan.rds",
     destfile = realcount_path, mode = "wb"
@@ -33,7 +29,6 @@ if (!file.exists(realcount_path)) {
 realnet_matrix <- readRDS(realnet_path)
 realcount_data <- readRDS(realcount_path)
 
-# definition
 backbone_cycle_simple <- function() {
   module_info <- tribble(
     ~module_id, ~basal, ~burn, ~independence,
@@ -123,11 +118,6 @@ run_simulation <- function(model_config) {
   
   out <- dyngen::generate_dataset(model, format = "dyno")
   model <- out$model
-  # dyngen's dyno-format `dataset$expression` is log2(counts + 1) - already log-transformed,
-  # meant for trajectory-inference tools, not for feeding into Cyclum/scPrisma (which each do
-  # their own CPM/log-normalization internally and expect raw counts as input, same as the
-  # real UMI datasets elsewhere in this repo). `dataset$counts` (= counts_mrna + counts_premrna)
-  # is the raw, non-negative-integer simulated molecule count matrix - use that instead.
   counts <- t(as.matrix(out$dataset$counts))
 
   list(
